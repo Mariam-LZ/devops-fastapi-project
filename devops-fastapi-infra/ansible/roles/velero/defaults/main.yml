@@ -1,0 +1,35 @@
+---
+velero_release_name: velero
+velero_chart_version: "8.1.0"
+velero_aws_plugin_version: "v1.10.1"
+velero_kubectl_image_repository: registry.k8s.io/kubectl
+velero_kubectl_image_tag: "v1.34.5"
+
+velero_schedule_name: daily-cluster-backup
+# Every day at 09:18 UTC.
+velero_schedule_cron: "10 12 * * *"
+# Back up all namespaces.
+velero_included_namespaces:
+  - "*"
+# Keep backups for 30 days.
+velero_backup_ttl: "720h0m0s"
+# PostgreSQL backup schedule (PVC Longhorn included via snapshots/filesystem backup)
+velero_postgres_backup_enabled: true
+velero_postgres_schedule_name: daily-postgres-backup
+# Every day at 09:20 UTC.
+velero_postgres_schedule_cron: "11 12 * * *"
+# PostgreSQL usually runs in application namespaces.
+velero_postgres_included_namespaces:
+  - dev
+  - prod
+# Keep PostgreSQL backups for 30 days.
+velero_postgres_backup_ttl: "720h0m0s"
+# Optional pre-backup pg_dump hook executed by Velero in PostgreSQL pods.
+velero_postgres_pgdump_enabled: true
+# Adapt these selector values to match your PostgreSQL pod labels.
+velero_postgres_pgdump_selector_key: app.kubernetes.io/name
+velero_postgres_pgdump_selector_value: postgresql
+velero_postgres_pgdump_container: postgresql
+velero_postgres_pgdump_dump_dir: /bitnami/postgresql/velero-dumps
+velero_postgres_pgdump_timeout: 10m
+velero_postgres_pgdump_on_error: Continue

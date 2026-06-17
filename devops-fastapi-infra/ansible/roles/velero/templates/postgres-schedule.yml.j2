@@ -1,0 +1,70 @@
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: "{{ velero_postgres_schedule_name }}"
+  namespace: "{{ velero_namespace | default('velero') }}"
+spec:
+  # Cron expression for PostgreSQL-focused backups.
+  schedule: "{{ velero_postgres_schedule_cron }}"
+  template:
+    # Backup only namespaces that host PostgreSQL workloads.
+    includedNamespaces:
+{% for namespace in velero_postgres_included_namespaces %}
+      - "{{ namespace }}"
+{% endfor %}
+    storageLocation: default
+    # Try CSI snapshots first (Longhorn PVC), then use filesystem backup fallback.
+    snapshotVolumes: true
+    defaultVolumesToFsBackup: true
+{% if velero_postgres_pgdump_enabled | bool %}
+    # Optional pre-backup logical dump stored on the PostgreSQL data volume.
+    hooks:
+      resources:
+        - name: postgres-pgdump-pre-backup
+          includedNamespaces:
+{% for namespace in velero_postgres_included_namespaces %}
+            - "{{ namespace }}"
+{% endfor %}
+          labelSelector:
+            matchLabels:
+              "{{ velero_postgres_pgdump_selector_key }}": "{{ velero_postgres_pgdump_selector_value }}"
+          pre:
+            - exec:
+                container: "{{ velero_postgres_pgdump_container }}"
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    set -eu
+
+                    mkdir -p "{{ velero_postgres_pgdump_dump_dir }}"
+
+                    DB_USER="${POSTGRES_USER:-${POSTGRESQL_USERNAME:-postgres}}"
+                    DB_NAME="${POSTGRES_DB:-${POSTGRES_DATABASE:-${POSTGRESQL_DATABASE:-postgres}}}"
+                    DB_PASSWORD="${POSTGRES_PASSWORD:-${POSTGRESQL_PASSWORD:-${POSTGRESQL_POSTGRES_PASSWORD:-}}}"
+
+                    if [ -z "$DB_PASSWORD" ] && [ -n "${POSTGRES_PASSWORD_FILE:-}" ] && [ -f "$POSTGRES_PASSWORD_FILE" ]; then
+                      DB_PASSWORD="$(cat "$POSTGRES_PASSWORD_FILE")"
+                    fi
+
+                    if [ -z "$DB_PASSWORD" ] && [ -n "${POSTGRES_POSTGRES_PASSWORD_FILE:-}" ] && [ -f "$POSTGRES_POSTGRES_PASSWORD_FILE" ]; then
+                      DB_PASSWORD="$(cat "$POSTGRES_POSTGRES_PASSWORD_FILE")"
+                    fi
+
+                    if [ -z "$DB_PASSWORD" ]; then
+                      echo "Missing PostgreSQL password environment variable or password file"
+                      exit 1
+                    fi
+
+                    export PGPASSWORD="$DB_PASSWORD"
+
+                    pg_dump \
+                      -U "$DB_USER" \
+                      -d "$DB_NAME" \
+                      -F c \
+                      -f "{{ velero_postgres_pgdump_dump_dir }}/pre-backup-$(date +%Y%m%d%H%M%S).dump"
+                onError: "{{ velero_postgres_pgdump_on_error }}"
+                timeout: "{{ velero_postgres_pgdump_timeout }}"
+{% endif %}
+          # Retention duration: backups older than TTL are deleted automatically.
+    ttl: "{{ velero_postgres_backup_ttl }}"

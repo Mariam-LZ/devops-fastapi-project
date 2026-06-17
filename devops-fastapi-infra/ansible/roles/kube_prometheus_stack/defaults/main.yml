@@ -1,0 +1,5 @@
+---
+kube_prometheus_stack_namespace: monitoring
+
+kube_prometheus_stack_alertmanager_resolve_timeout: 5m
+kube_prometheus_stack_alertmanager_repeat_interval: 4h

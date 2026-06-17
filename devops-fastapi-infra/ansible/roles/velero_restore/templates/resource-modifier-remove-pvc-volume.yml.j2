@@ -1,0 +1,9 @@
+version: v1
+resourceModifierRules:
+  - conditions:
+      groupResource: persistentvolumeclaims
+      namespaces:
+        - {{ source_namespace }}
+    patches:
+      - operation: remove
+        path: /spec/volumeName

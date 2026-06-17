@@ -1,0 +1,120 @@
+---
+# Run kube-bench as a one-shot Kubernetes Job to audit the cluster against CIS recommendations.
+
+- name: Create kube-bench namespace
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ kube_bench_namespace }}"
+
+- name: Delete previous kube-bench job if it exists
+  kubernetes.core.k8s:
+    state: absent
+    kubeconfig: /etc/kubernetes/admin.conf
+    api_version: batch/v1
+    kind: Job
+    namespace: "{{ kube_bench_namespace }}"
+    name: "{{ kube_bench_job_name }}"
+    wait: true
+  failed_when: false
+
+- name: Run kube-bench job
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "{{ kube_bench_job_name }}"
+        namespace: "{{ kube_bench_namespace }}"
+      spec:
+        backoffLimit: 0
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: kube-bench
+          spec:
+            hostPID: true
+            restartPolicy: Never
+            containers:
+              - name: kube-bench
+                image: "{{ kube_bench_image }}"
+                command:
+                  - kube-bench
+                volumeMounts:
+                  - name: var-lib-etcd
+                    mountPath: /var/lib/etcd
+                    readOnly: true
+                  - name: var-lib-kubelet
+                    mountPath: /var/lib/kubelet
+                    readOnly: true
+                  - name: etc-systemd
+                    mountPath: /etc/systemd
+                    readOnly: true
+                  - name: etc-kubernetes
+                    mountPath: /etc/kubernetes
+                    readOnly: true
+                  - name: usr-bin
+                    mountPath: /usr/local/mount-from-host/bin
+                    readOnly: true
+            volumes:
+              - name: var-lib-etcd
+                hostPath:
+                  path: /var/lib/etcd
+              - name: var-lib-kubelet
+                hostPath:
+                  path: /var/lib/kubelet
+              - name: etc-systemd
+                hostPath:
+                  path: /etc/systemd
+              - name: etc-kubernetes
+                hostPath:
+                  path: /etc/kubernetes
+              - name: usr-bin
+                hostPath:
+                  path: /usr/bin
+
+- name: Wait for kube-bench job completion
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/kubernetes/admin.conf
+    api_version: batch/v1
+    kind: Job
+    namespace: "{{ kube_bench_namespace }}"
+    name: "{{ kube_bench_job_name }}"
+  register: kube_bench_job
+  until: >
+    kube_bench_job.resources | length > 0 and
+    (
+      kube_bench_job.resources[0].status.succeeded is defined or
+      kube_bench_job.resources[0].status.failed is defined
+    )
+  retries: 30
+  delay: 10
+
+- name: Get kube-bench pod
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/kubernetes/admin.conf
+    api_version: v1
+    kind: Pod
+    namespace: "{{ kube_bench_namespace }}"
+    label_selectors:
+      - job-name={{ kube_bench_job_name }}
+  register: kube_bench_pods
+
+- name: Read kube-bench logs
+  ansible.builtin.command: >
+    kubectl logs -n {{ kube_bench_namespace }}
+    {{ kube_bench_pods.resources[0].metadata.name }}
+  register: kube_bench_logs
+  changed_when: false
+  when: kube_bench_pods.resources | length > 0
+
+- name: Show kube-bench report
+  ansible.builtin.debug:
+    var: kube_bench_logs.stdout_lines
+  when: kube_bench_logs is defined

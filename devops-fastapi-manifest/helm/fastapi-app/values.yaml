@@ -1,0 +1,233 @@
+# Default Helm values for the FastAPI application.
+# Environment-specific files such as values-dev.yaml and values-prod.yaml
+# override these defaults.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  # Default namespace used by templates.
+  # This value is overridden by values-dev.yaml and values-prod.yaml.
+  namespace: default
+
+  # Secret used to pull private images from the GitLab Container Registry.
+  imagePullSecrets:
+    - name: gitlab-registry
+
+config:
+  # Default runtime configuration for the backend.
+  # Environment-specific values can override these settings.
+  ENVIRONMENT: "local"
+  PROJECT_NAME: "DevOps FastAPI"
+  BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173"
+  POSTGRES_SERVER: "fastapi-app-postgresql"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "fastapi"
+  POSTGRES_USER: "fastapi"
+
+backend:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: registry.gitlab.com/devops-glmt/devops-fastapi-app/backend
+    pullPolicy: Always
+    tag: "latest"
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  # Explicit command used to start the FastAPI application inside the container.
+  command:
+    - fastapi
+  args:
+    - run
+    - app/main.py
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8000"
+
+  # Resource requests reserve capacity.
+  # Limits prevent the backend from consuming too much node capacity.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Horizontal Pod Autoscaler configuration.
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  # Prometheus scraping configuration.
+  # Disabled by default and enabled per environment when needed.
+  serviceMonitor:
+    enabled: false
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: kube-prometheus-stack
+
+  # Prometheus alerting rules.
+  # Disabled by default and enabled per environment when needed.
+  prometheusRule:
+    enabled: false
+    labels:
+      release: kube-prometheus-stack
+
+  serviceAccount:
+    create: true
+    automount: false
+    annotations: {}
+
+  # Optional prestart job.
+  prestart:
+    enabled: true
+    backoffLimit: 3
+    command:
+      - bash
+      - /app/scripts/prestart.sh
+
+frontend:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: registry.gitlab.com/devops-glmt/devops-fastapi-app/frontend
+    pullPolicy: Always
+    tag: "latest"
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+
+postgresql:
+  enabled: true
+
+  metrics:
+    enabled: false
+    serviceMonitor:
+      enabled: false
+      labels:
+        release: kube-prometheus-stack
+
+  auth:
+    username: fastapi
+    database: fastapi
+
+    # PostgreSQL credentials are created outside this chart by the infrastructure layer.
+    # The Bitnami PostgreSQL chart reads them from this existing Kubernetes Secret.
+    existingSecret: fastapi-postgres-secret
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
+
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    networkPolicy:
+      enabled: true
+      allowExternal: false
+      allowExternalEgress: false
+
+postgresqlMonitoring:
+  prometheusRule:
+    enabled: false
+    labels:
+      release: kube-prometheus-stack
+
+adminer:
+  enabled: true
+
+  image:
+    repository: adminer
+    tag: "5.3.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  ingress:
+    # Adminer is not exposed by default.
+    enabled: false
+    className: traefik
+    host: adminer.local
+    annotations: {}
+    tls:
+      enabled: false
+      secretName: ""
+
+ingress:
+  # The application is not exposed by default.
+  # Production enables this in values-prod.yaml.
+  enabled: false
+  className: traefik
+  host: ""
+
+  annotations: {}
+
+  tls:
+    enabled: false
+    secretName: ""
+
+  frontend:
+    path: /
+    pathType: Prefix
+
+  backend:
+    path: /api
+    pathType: Prefix
+
+secrets:
+  # Secrets are managed by the infrastructure repository using Ansible Vault.
+  # This chart only references existing Kubernetes Secrets.
+  enabled: false
+  existingSecret: "fastapi-app-backend-secret"
+
+grafanaDashboards:
+  # Dashboard ConfigMaps can be enabled when Grafana sidecar discovery is configured.
+  enabled: true
+
+networkPolicy:
+  enabled: true

@@ -1,0 +1,129 @@
+---
+- name: Configure all Kubernetes nodes
+  hosts: k8s_cluster
+  become: true
+  roles:
+    - role: common
+      tags: common
+
+    - role: containerd
+      tags: containerd
+
+    - role: kubernetes
+      tags: kubernetes
+
+- name: Configure Kubernetes API load balancer
+  hosts: masters
+  become: true
+  roles:
+    - role: api_load_balancer
+      tags: api_load_balancer
+
+- name: Configure Kubernetes control plane nodes
+  hosts: masters
+  become: true
+  roles:
+    - role: masters
+      tags: masters
+
+- name: Configure Kubernetes worker nodes
+  hosts: workers
+  become: true
+  roles:
+    - role: workers
+      tags: workers
+
+- name: Install Kubernetes platform components
+  hosts: "{{ groups['masters'][0] }}"
+  become: true
+  roles:
+    - role: namespaces
+      tags:
+        - namespaces
+        - platform
+
+    - role: helm
+      tags:
+        - helm
+        - platform
+
+    - role: metallb
+      tags:
+        - metallb
+        - platform
+
+    - role: traefik
+      tags:
+        - traefik
+        - platform
+
+    - role: cert_manager
+      tags:
+        - cert_manager
+        - platform
+
+    - role: metrics_server
+      tags:
+        - metrics_server
+        - platform
+
+    - role: coredns
+      tags:
+        - coredns
+        - platform
+
+    - role: longhorn
+      tags:
+        - longhorn
+        - platform
+
+    - role: k8s_secrets
+      tags:
+        - k8s_secrets
+        - platform
+
+    - role: kube_prometheus_stack
+      tags:
+        - kube_prometheus_stack
+        - platform
+
+    - role: argocd
+      tags:
+        - argocd
+        - gitops
+        - platform
+
+    - role: argocd_bootstrap
+      tags:
+        - argocd_bootstrap
+        - gitops
+        - platform
+    - role: argocd_image_updater
+      tags:
+        - argocd_image_updater
+        - gitops
+        - platform
+
+- name: Configure service nodes
+  hosts: services
+  become: true
+  roles:
+    - role: docker
+      tags: docker
+
+    - role: gitlab_runner
+      tags: gitlab_runner
+
+    - role: minio
+      tags:
+        - minio
+        - backup
+
+- name: Install Velero after MinIO is ready
+  hosts: "{{ groups['masters'][0] }}"
+  become: true
+  roles:
+    - role: velero
+      tags:
+        - velero
+        - backup

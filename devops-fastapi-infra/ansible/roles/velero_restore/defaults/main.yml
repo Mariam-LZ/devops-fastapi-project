@@ -1,0 +1,57 @@
+---
+# Velero namespace and kubeconfig path.
+velero_restore_namespace: velero
+velero_restore_kubeconfig_path: /etc/kubernetes/admin.conf
+
+# Backup selection.
+# If empty, the playbook asks interactively.
+velero_restore_backup_name: ""
+
+# Source namespace inside the backup.
+# Usually dev or prod.
+velero_restore_source_namespace: ""
+
+# Temporary namespace used to validate the restore safely.
+velero_restore_test_namespace: ""
+
+# Final target namespace.
+# Allowed values: dev or prod.
+# If empty, the playbook asks interactively after the test restore.
+velero_restore_target_namespace: ""
+
+velero_restore_remove_pvc_volume_name: true
+
+# Restore names.
+velero_restore_test_name: ""
+velero_restore_final_name: ""
+
+# Restore behavior.
+velero_restore_existing_resource_policy: none
+velero_restore_include_cluster_resources: false
+
+# Safety gates.
+velero_restore_confirm_final: false
+velero_restore_allow_prod: false
+velero_restore_prod_confirm_text: ""
+
+# Cleanup test namespace before restore.
+velero_restore_recreate_test_namespace: true
+
+# Wait settings.
+velero_restore_wait_retries: 60
+velero_restore_wait_delay: 10
+
+# Validation.
+velero_restore_validate_pods: true
+velero_restore_validate_pvc: true
+velero_restore_show_resources: true
+
+# Optional PostgreSQL validation.
+velero_restore_validate_postgres: true
+velero_restore_postgres_label_selector: "app.kubernetes.io/name=postgresql"
+velero_restore_postgres_container: postgresql
+velero_restore_postgres_db: fastapi
+velero_restore_postgres_user: fastapi
+
+# Optional: keep test namespace after validation for manual inspection.
+velero_restore_keep_test_namespace: true

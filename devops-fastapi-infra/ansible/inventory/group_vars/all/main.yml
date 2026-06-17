@@ -1,0 +1,11 @@
+# Common
+k8s_internal_cidr: "192.168.1.0/24"
+k8s_pod_network_cidr: "192.168.0.0/16"
+
+# MinIO
+minio_api_port: 9000
+
+# Velero
+# Resolves the MinIO host from the services inventory group at runtime.
+velero_minio_url: "http://{{ hostvars[groups['services'][0]]['ansible_host'] }}:{{ minio_api_port }}"
+velero_bucket: velero

@@ -1,0 +1,22 @@
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: {{ restore_name }}
+  namespace: {{ velero_restore_namespace }}
+spec:
+  backupName: {{ velero_restore_backup_name }}
+
+  includedNamespaces:
+    - {{ source_namespace }}
+
+  namespaceMapping:
+    {{ source_namespace }}: {{ target_namespace }}
+
+  includeClusterResources: {{ velero_restore_include_cluster_resources | lower }}
+  existingResourcePolicy: {{ velero_restore_existing_resource_policy }}
+
+{% if velero_restore_remove_pvc_volume_name | bool %}
+  resourceModifier:
+    kind: ConfigMap
+    name: {{ restore_name }}-resource-modifier
+{% endif %}

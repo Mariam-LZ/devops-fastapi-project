@@ -1,0 +1,76 @@
+---
+- name: Install containerd
+  ansible.builtin.apt:
+    name: containerd
+    state: present
+    update_cache: true
+
+- name: Create containerd configuration directory
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
+
+# Generate a config matching the installed containerd version
+# instead of relying on a static file.
+- name: Generate default containerd configuration
+  ansible.builtin.command: containerd config default
+  register: containerd_config
+  changed_when: false
+
+# containerd reads config.toml only at startup,
+# so configuration changes require a restart.
+- name: Deploy containerd configuration
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_config.stdout }}"
+    mode: "0644"
+  notify: Restart containerd
+
+# CRI is required for kubelet <-> containerd communication.
+- name: Enable CRI plugin in containerd
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'disabled_plugins\s*=\s*\["cri"\]'
+    replace: 'disabled_plugins = []'
+  notify: Restart containerd
+
+# Kubernetes recommends using the systemd cgroup driver.
+- name: Configure containerd to use systemd cgroup driver
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: "SystemdCgroup = false"
+    replace: "SystemdCgroup = true"
+  notify: Restart containerd
+
+# Pin the Kubernetes pause image version used for pod sandboxes.
+- name: Configure Kubernetes pause image for containerd
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'sandbox_image = ".*"'
+    replace: 'sandbox_image = "registry.k8s.io/pause:3.9"'
+  notify: Restart containerd
+
+# Required for Kubernetes CNI networking.
+- name: Configure containerd CNI binary directory
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'bin_dir = ".*"'
+    replace: 'bin_dir = "/opt/cni/bin"'
+  notify:
+    - Restart containerd
+
+- name: Configure containerd CNI config directory
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'conf_dir = ".*"'
+    replace: 'conf_dir = "/etc/cni/net.d"'
+  notify:
+    - Restart containerd
+
+- name: Ensure containerd service is enabled and started
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started
+    daemon_reload: true

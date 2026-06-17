@@ -1,0 +1,141 @@
+---
+# Velero is installed via Helm to provide cluster backup and restore capabilities.
+# MinIO is used as the S3-compatible object storage backend already deployed
+# on the services node.
+
+- name: Resolve Velero MinIO credentials
+  ansible.builtin.set_fact:
+    velero_minio_access_key_resolved: "{{ vault_velero_minio_access_key | default(velero_minio_access_key, true) | default('', true) }}"
+    velero_minio_secret_key_resolved: "{{ vault_velero_minio_secret_key | default(velero_minio_secret_key, true) | default('', true) }}"
+  no_log: true
+
+- name: Validate Velero MinIO credentials are defined
+  ansible.builtin.assert:
+    that:
+      - velero_minio_access_key_resolved | length > 0
+      - velero_minio_secret_key_resolved | length > 0
+    fail_msg: >-
+      Missing Velero MinIO credentials. Define vault_velero_minio_access_key and
+      vault_velero_minio_secret_key in ansible/inventory/group_vars/all/vault.yml,
+      or provide velero_minio_access_key and velero_minio_secret_key.
+
+# Velero authenticates against MinIO using AWS-style credentials.
+# The secret is created beforehand so Helm can reference it as an
+# existingSecret instead of embedding credentials in the release values.
+- name: Create Velero credentials secret
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: velero-credentials
+        namespace: velero
+      type: Opaque
+      stringData:
+        cloud: |
+          [default]
+          aws_access_key_id={{ velero_minio_access_key_resolved }}
+          aws_secret_access_key={{ velero_minio_secret_key_resolved }}
+  no_log: true
+
+- name: Add Velero Helm repository
+  kubernetes.core.helm_repository:
+    name: vmware-tanzu
+    repo_url: https://vmware-tanzu.github.io/helm-charts
+
+- name: Ensure Velero CRDs are installed
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f
+      https://raw.githubusercontent.com/vmware-tanzu/helm-charts/velero-{{ velero_chart_version }}/charts/velero/crds/{{ item }}
+  register: velero_crd_apply
+  changed_when: >-
+    'created' in velero_crd_apply.stdout or
+    'configured' in velero_crd_apply.stdout
+  loop:
+    - backuprepositories.yaml
+    - backups.yaml
+    - backupstoragelocations.yaml
+    - datadownloads.yaml
+    - datauploads.yaml
+    - deletebackuprequests.yaml
+    - downloadrequests.yaml
+    - podvolumebackups.yaml
+    - podvolumerestores.yaml
+    - restores.yaml
+    - schedules.yaml
+    - serverstatusrequests.yaml
+    - volumesnapshotlocations.yaml
+
+- name: Install Velero
+  kubernetes.core.helm:
+    release_name: "{{ velero_release_name }}"
+    release_state: present
+    chart_ref: vmware-tanzu/velero
+    chart_version: "{{ velero_chart_version }}"
+    release_namespace: velero
+    create_namespace: false
+    update_repo_cache: true
+    # Avoid reset-on-upgrade behavior, which can be problematic on first install.
+    reset_values: false
+    # Waits until all Velero resources (deployment, node-agent daemonset) are ready.
+    wait: true
+    timeout: 300s
+    kubeconfig: /etc/kubernetes/admin.conf
+    release_values:
+      # CRDs are applied explicitly in the previous task; disable hook job that can fail.
+      upgradeCRDs: false
+      # Reference the pre-created secret instead of passing credentials inline.
+      credentials:
+        useSecret: true
+        existingSecret: velero-credentials
+      configuration:
+        backupStorageLocation:
+          - name: default
+            provider: aws
+            bucket: "{{ velero_bucket }}"
+            default: true
+            config:
+              region: minio
+              # Required for MinIO path-style URL (http://host:port/bucket).
+              s3ForcePathStyle: "true"
+              s3Url: "{{ velero_minio_url }}"
+        volumeSnapshotLocation:
+          - name: default
+            provider: aws
+            config:
+              region: minio
+      kubectl:
+        image:
+          repository: "{{ velero_kubectl_image_repository }}"
+          tag: "{{ velero_kubectl_image_tag }}"
+      # Enables filesystem backup support (Kopia) for PVCs when needed.
+      deployNodeAgent: true
+      # The AWS plugin is needed for S3-compatible backends such as MinIO.
+      initContainers:
+        - name: velero-plugin-for-aws
+          image: "velero/velero-plugin-for-aws:{{ velero_aws_plugin_version }}"
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /target
+              name: plugins
+
+# The Schedule CRD is registered by Helm above (wait: true ensures it is ready).
+# This creates a recurring backup of the entire cluster.
+- name: Create Velero backup schedule
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition: "{{ lookup('template', 'cluster-schedule.yml.j2') | from_yaml }}"
+
+# This dedicated schedule targets PostgreSQL namespaces and ensures PVC data
+# is captured (Longhorn-backed volumes included). The full Schedule manifest is
+# generated from a Jinja template to keep hook logic readable.
+- name: Create Velero PostgreSQL backup schedule
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition: "{{ lookup('template', 'postgres-schedule.yml.j2') | from_yaml }}"
+  when: velero_postgres_backup_enabled | bool

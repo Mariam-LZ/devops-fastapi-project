@@ -1,0 +1,23 @@
+---
+- name: Add ArgoCD Helm repository
+  kubernetes.core.helm_repository:
+    name: argo
+    repo_url: https://argoproj.github.io/argo-helm
+
+# ArgoCD is installed through Helm to simplify upgrades,
+# configuration management, and future GitOps automation.
+- name: Install ArgoCD
+  kubernetes.core.helm:
+    name: "{{ argocd_release_name }}"
+    chart_ref: "{{ argocd_chart_ref }}"
+    release_namespace: "{{ argocd_namespace }}"
+    create_namespace: false
+
+    # Waits until all ArgoCD resources are ready before continuing.
+    wait: true
+
+    # ArgoCD installation can take time on fresh clusters,
+    # especially while pulling images and creating CRDs.
+    timeout: 600s
+
+    kubeconfig: /etc/kubernetes/admin.conf

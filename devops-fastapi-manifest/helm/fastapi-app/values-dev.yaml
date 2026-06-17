@@ -1,0 +1,120 @@
+# Development environment values.
+# This file overrides the default chart values for the dev namespace.
+# Dev is intended for internal testing and does not expose the application publicly.
+
+global:
+  # Namespace where the main application resources are deployed.
+  namespace: dev
+
+backend:
+  # Keep only one backend replica in dev to reduce resource usage.
+  replicaCount: 1
+
+  image:
+    # Image tag managed by Argo CD Image Updater.
+    tag: "dev"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  serviceMonitor:
+    # Enable Prometheus scraping for backend metrics in dev.
+    enabled: true
+
+  prometheusRule:
+    # Enable alerting rules in dev to validate monitoring behavior before prod.
+    enabled: true
+
+  envFromSecrets:
+    # Secrets are created by the infrastructure repository using Ansible Vault.
+    # The Helm chart only references existing Kubernetes secrets.
+    - fastapi-app-backend-secret
+    - fastapi-postgres-secret
+
+frontend:
+  # Keep only one frontend replica in dev to reduce resource usage.
+  replicaCount: 1
+
+  image:
+    # Image tag managed by Argo CD Image Updater.
+    tag: "dev"
+
+  autoscaling:
+    enabled: false
+
+postgresql:
+  # Force the Bitnami PostgreSQL chart to deploy its resources in the dev namespace.
+  namespaceOverride: dev
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prometheus-stack
+
+  primary:
+    networkPolicy:
+      extraIngress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: backend
+                  app.kubernetes.io/instance: fastapi-app-dev
+          ports:
+            - protocol: TCP
+              port: 5432
+        # Allow backend prestart job to initialize/check the database.
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: backend-prestart
+                  app.kubernetes.io/instance: fastapi-app-dev
+          ports:
+            - protocol: TCP
+              port: 5432
+        # Allow Prometheus from the monitoring namespace to scrape PostgreSQL metrics.
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+          ports:
+            - protocol: TCP
+              port: 9187
+
+postgresqlMonitoring:
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+adminer:
+  ingress:
+    # Adminer can be exposed locally for database debugging in dev.
+    enabled: true
+    host: adminer.dev.local
+
+ingress:
+  # The main application is not exposed publicly in dev.
+  # Access should be done through local/internal networking.
+  enabled: false
+
+config:
+  # Application runtime environment used by the backend.
+  ENVIRONMENT: "local"
+
+  # Allowed origins for local frontend tests and the deployed app domain.
+  BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://p.fastapi-liora.cloud-ip.cc"
+
+  # Internal Kubernetes service name for the dev PostgreSQL instance.
+  POSTGRES_SERVER: fastapi-app-dev-postgresql
+
+secrets:
+  # Secrets are not created by this Helm chart.
+  # They are managed by the infrastructure layer.
+  enabled: false
+  existingSecret: fastapi-app-backend-secret

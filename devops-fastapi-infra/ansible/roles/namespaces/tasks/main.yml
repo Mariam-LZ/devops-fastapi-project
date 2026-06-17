@@ -1,0 +1,19 @@
+---
+- name: Create Kubernetes namespaces
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+  loop:
+    - dev
+    - prod
+    - argocd
+    - traefik
+    - cert-manager
+    - monitoring
+    - longhorn-system
+    - velero

@@ -1,0 +1,163 @@
+# CI pipeline used to validate, secure and optionally deploy the infrastructure.
+# Pipelines are no longer started automatically on push or merge request.
+# They must be launched manually from GitLab: CI/CD > Pipelines > Run pipeline.
+
+workflow:
+  rules:
+    # Allow only manually started pipelines from the GitLab UI.
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - when: never
+
+stages:
+  - validate
+  - security
+  - provision
+  - configure
+
+variables:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+
+# Validate Terraform formatting and syntax without using the remote backend.
+terraform_validate:
+  stage: validate
+  image:
+    name: hashicorp/terraform:latest
+    entrypoint: [""]
+  script:
+    - cd terraform
+    - terraform init -backend=false
+    - terraform fmt -check
+    - terraform validate
+
+# Lint Ansible roles and playbooks to catch common mistakes and enforce best practices.
+ansible_lint:
+  stage: validate
+  image: python:3.12-slim
+  before_script:
+    - pip install ansible ansible-lint
+    - ansible-galaxy collection install -r ansible/requirements.yml
+  script:
+    - chmod -R o-w "$CI_PROJECT_DIR"
+    - export ANSIBLE_CONFIG="$CI_PROJECT_DIR/ansible/ansible.cfg"
+    - cd ansible
+    - ansible-lint
+
+# Scan Terraform files for Infrastructure as Code security misconfigurations.
+checkov:
+  stage: security
+  image:
+    name: bridgecrew/checkov:latest
+    entrypoint: [""]
+  script:
+    - checkov -d terraform
+
+# Detect hardcoded secrets such as tokens, passwords, API keys or private keys.
+gitleaks:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --verbose --redact
+
+# Ensure the Ansible Vault file is encrypted and not committed in plain text.
+ansible_vault_check:
+  stage: security
+  image: alpine:latest
+  script:
+    - test -f ansible/inventory/group_vars/all/vault.yml
+    - grep -q '^\$ANSIBLE_VAULT;' ansible/inventory/group_vars/all/vault.yml
+
+# Apply Terraform manually with parallelism=1 to avoid overloading Proxmox.
+terraform_apply:
+  stage: provision
+  image:
+    name: hashicorp/terraform:latest
+    entrypoint: [""]
+  resource_group: proxmox-infra
+  when: manual
+  allow_failure: false
+  needs:
+    - terraform_validate
+    - ansible_lint
+    - checkov
+    - gitleaks
+    - ansible_vault_check
+  before_script:
+    - apk add --no-cache openssh-client coreutils
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+
+  # SSH key used by Terraform/Ansible to connect to the created VMs.
+    - printf "%s" "$ANSIBLE_SSH_PRIVATE_KEY_B64" | base64 -d > ~/.ssh/ansiblehost
+    - chmod 600 ~/.ssh/ansiblehost
+
+  # SSH key used to jump through the Proxmox / bastion host if needed.
+    - printf "%s" "$JUMP_SSH_PRIVATE_KEY_B64" | base64 -d > ~/.ssh/proxmox_ed25519
+    - chmod 600 ~/.ssh/proxmox_ed25519
+  script:
+    - cd terraform
+
+    # Generate CI-only Terraform variables file.
+    - |
+      cat > terraform.auto.tfvars <<EOF
+      api_token = "$TF_VAR_api_token"
+
+      ssh_keys = [
+        "$TF_VAR_ssh_public_key"
+      ]
+
+      jump_private_key_file = "~/.ssh/proxmox_ed25519"
+      ssh_private_key_file  = "~/.ssh/ansiblehost"
+
+      domain     = "$TF_VAR_domain"
+      acme_email = "$TF_VAR_acme_email"
+      EOF
+
+    - terraform init
+    - terraform plan -out=tfplan
+    - terraform apply -auto-approve -parallelism=1 tfplan
+    - echo "Waiting for Proxmox to finish creating and booting the VMs..."
+    - sleep 240
+
+# Run the Ansible playbook after Terraform has created the VMs.
+ansible_apply:
+  stage: configure
+  image: python:3.12-slim
+  resource_group: proxmox-infra
+  needs:
+    - terraform_apply
+  before_script:
+    - apt-get update
+    - apt-get install -y openssh-client git
+    - pip install ansible
+    - ansible-galaxy collection install -r ansible/requirements.yml
+
+    # Prepare SSH key from GitLab CI variable.
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$ANSIBLE_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+
+    # Prepare Ansible Vault password from GitLab CI variable.
+    - printf "%s" "$ANSIBLE_VAULT_PASSWORD" > .vault_pass.txt
+    - chmod 600 .vault_pass.txt
+
+    # Use the project Ansible config.
+    - export ANSIBLE_CONFIG="$CI_PROJECT_DIR/ansible/ansible.cfg"
+
+  script:
+    - cd ansible
+
+    # Optional but useful: wait until SSH is reachable before launching the full playbook.
+    - ansible all -i inventory/hosts.yml -m ping --vault-password-file ../.vault_pass.txt || true
+    - echo "Waiting a bit more before the full configuration..."
+    - sleep 120
+
+    # Run the full infrastructure configuration.
+    - ansible-playbook -i inventory/hosts.yml playbook.yml --vault-password-file ../.vault_pass.txt
+
+  after_script:
+    - rm -f .vault_pass.txt

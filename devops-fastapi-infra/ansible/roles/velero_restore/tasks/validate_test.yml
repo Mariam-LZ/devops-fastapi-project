@@ -1,0 +1,163 @@
+---
+- name: Show restored resources in test namespace
+  ansible.builtin.command:
+    cmd: >
+      kubectl get all,pvc
+      -n {{ velero_restore_test_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_test_resources
+  changed_when: false
+  when: velero_restore_show_resources | default(true) | bool
+
+- name: Display restored resources
+  ansible.builtin.debug:
+    msg: "{{ velero_restore_test_resources.stdout_lines }}"
+  when: velero_restore_show_resources | default(true) | bool
+
+- name: Wait for pods to be ready in test namespace
+  ansible.builtin.command:
+    cmd: >
+      kubectl wait pod
+      -n {{ velero_restore_test_namespace }}
+      --for=condition=Ready
+      --all
+      --timeout=300s
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_test_pods_ready
+  changed_when: false
+  failed_when: false
+  when: velero_restore_validate_pods | default(true) | bool
+
+- name: Fail if test pods are not ready
+  ansible.builtin.fail:
+    msg: >-
+      Some pods are not ready in {{ velero_restore_test_namespace }}.
+      Check with:
+      kubectl get pods -n {{ velero_restore_test_namespace }}
+  when:
+    - velero_restore_validate_pods | default(true) | bool
+    - velero_restore_test_pods_ready.rc != 0
+
+- name: Check PVC status in test namespace
+  ansible.builtin.command:
+    cmd: >
+      kubectl get pvc
+      -n {{ velero_restore_test_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}'
+  register: velero_restore_test_pvc_status
+  changed_when: false
+  when: velero_restore_validate_pvc | default(true) | bool
+
+- name: Show PVC status
+  ansible.builtin.debug:
+    msg: "{{ velero_restore_test_pvc_status.stdout_lines }}"
+  when: velero_restore_validate_pvc | default(true) | bool
+
+- name: Fail if at least one PVC is not Bound
+  ansible.builtin.fail:
+    msg: "At least one PVC is not Bound in {{ velero_restore_test_namespace }}."
+  when:
+    - velero_restore_validate_pvc | default(true) | bool
+    - "'Pending' in velero_restore_test_pvc_status.stdout or 'Lost' in velero_restore_test_pvc_status.stdout"
+
+- name: Check PodVolumeRestore status for test restore
+  ansible.builtin.command:
+    cmd: >
+      kubectl get podvolumerestores.velero.io
+      -n {{ velero_restore_namespace }}
+      -l velero.io/restore-name={{ velero_restore_test_name }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.volume}{" "}{.status.phase}{" "}{.status.message}{"\n"}{end}'
+  register: velero_restore_test_pod_volume_restore_status
+  changed_when: false
+
+- name: Show PodVolumeRestore status
+  ansible.builtin.debug:
+    msg: "{{ velero_restore_test_pod_volume_restore_status.stdout_lines }}"
+
+- name: Fail if at least one PodVolumeRestore failed
+  ansible.builtin.fail:
+    msg: >-
+      At least one PodVolumeRestore failed for {{ velero_restore_test_name }}.
+      Details:
+      {{ velero_restore_test_pod_volume_restore_status.stdout_lines }}
+  when: "'Failed' in velero_restore_test_pod_volume_restore_status.stdout"
+
+- name: Check if at least one PodVolumeRestore is still running
+  ansible.builtin.set_fact:
+    velero_restore_pod_volume_restore_still_running: >-
+      {{
+        velero_restore_test_pod_volume_restore_status.stdout is search('InProgress')
+        or velero_restore_test_pod_volume_restore_status.stdout is search('New')
+        or velero_restore_test_pod_volume_restore_status.stdout is search('Accepted')
+      }}
+
+- name: Fail if at least one PodVolumeRestore is still not completed
+  ansible.builtin.fail:
+    msg: >-
+      At least one PodVolumeRestore is not Completed for {{ velero_restore_test_name }}.
+      Details:
+      {{ velero_restore_test_pod_volume_restore_status.stdout_lines }}
+  when:
+    - velero_restore_test_pod_volume_restore_status.stdout | length > 0
+    - velero_restore_pod_volume_restore_still_running | bool
+
+- name: Find PostgreSQL pod in test namespace
+  ansible.builtin.command:
+    cmd: >
+      kubectl get pod
+      -n {{ velero_restore_test_namespace }}
+      -l {{ velero_restore_postgres_label_selector }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{.items[0].metadata.name}'
+  register: velero_restore_postgres_pod
+  changed_when: false
+  when: velero_restore_validate_postgres | default(true) | bool
+
+- name: Fail if PostgreSQL pod was not found
+  ansible.builtin.fail:
+    msg: >-
+      No PostgreSQL pod found in {{ velero_restore_test_namespace }}
+      with selector {{ velero_restore_postgres_label_selector }}.
+  when:
+    - velero_restore_validate_postgres | default(true) | bool
+    - velero_restore_postgres_pod.stdout | length == 0
+
+- name: Check PostgreSQL responds in test namespace
+  ansible.builtin.command:
+    cmd: >
+      kubectl exec
+      -n {{ velero_restore_test_namespace }}
+      {{ velero_restore_postgres_pod.stdout }}
+      -c {{ velero_restore_postgres_container }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      --
+      bash -lc
+      'export PGPASSWORD="$(cat /opt/bitnami/postgresql/secrets/password)" &&
+      psql -U {{ velero_restore_postgres_user }}
+      -d {{ velero_restore_postgres_db }}
+      -h 127.0.0.1
+      -p 5432
+      -c "\dt"'
+  register: velero_restore_postgres_check
+  changed_when: false
+  failed_when: false
+  when: velero_restore_validate_postgres | default(true) | bool
+
+- name: Show PostgreSQL validation output
+  ansible.builtin.debug:
+    msg:
+      - "rc={{ velero_restore_postgres_check.rc }}"
+      - "stdout={{ velero_restore_postgres_check.stdout_lines }}"
+      - "stderr={{ velero_restore_postgres_check.stderr_lines }}"
+  when: velero_restore_validate_postgres | default(true) | bool
+
+- name: Fail if PostgreSQL validation failed
+  ansible.builtin.fail:
+    msg: >-
+      PostgreSQL validation failed in {{ velero_restore_test_namespace }}.
+      Check pod logs and database credentials.
+  when:
+    - velero_restore_validate_postgres | default(true) | bool
+    - velero_restore_postgres_check.rc != 0

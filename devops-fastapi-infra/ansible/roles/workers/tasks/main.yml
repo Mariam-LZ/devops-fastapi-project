@@ -1,0 +1,11 @@
+---
+# Worker nodes join the cluster using the join command
+# generated on the primary control plane node.
+- name: Join node as Kubernetes worker
+  ansible.builtin.command: "{{ hostvars[groups['masters'][0]].masters_kubeadm_worker_join_command }}"
+  args:
+
+    # Prevent rejoining nodes already part of the cluster.
+    creates: /etc/kubernetes/kubelet.conf
+
+  changed_when: true

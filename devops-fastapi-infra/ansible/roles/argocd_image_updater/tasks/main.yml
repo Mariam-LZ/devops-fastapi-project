@@ -1,0 +1,32 @@
+---
+- name: Install Argo CD Image Updater
+  kubernetes.core.helm:
+    name: "{{ argocd_image_updater_release_name }}"
+    chart_ref: "{{ argocd_image_updater_chart_ref }}"
+    release_namespace: "{{ argocd_namespace }}"
+    create_namespace: false
+    wait: true
+    timeout: 300s
+    kubeconfig: /etc/kubernetes/admin.conf
+    values:
+      config:
+        logLevel: info
+        argocd:
+          serverAddress: "https://argocd-server.argocd.svc"
+          insecure: true
+          grpcWeb: true
+
+- name: Create ImageUpdater resource for FastAPI applications
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    definition:
+      apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+      kind: ImageUpdater
+      metadata:
+        name: fastapi-apps
+        namespace: "{{ argocd_namespace }}"
+      spec:
+        applicationRefs:
+          - namePattern: fastapi-app-*
+            useAnnotations: true

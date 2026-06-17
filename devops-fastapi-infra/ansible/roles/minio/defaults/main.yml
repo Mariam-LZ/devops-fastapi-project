@@ -1,0 +1,8 @@
+---
+minio_dir: /opt/minio
+minio_image: quay.io/minio/minio:latest
+minio_root_user: minioadmin
+minio_root_password: "{{ vault_minio_root_password }}"
+minio_api_port: 9000
+minio_console_port: 9001
+minio_data_dir: /data/minio

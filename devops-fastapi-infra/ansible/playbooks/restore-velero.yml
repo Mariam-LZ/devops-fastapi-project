@@ -1,0 +1,8 @@
+---
+- name: Safely restore Kubernetes resources from a Velero backup
+  hosts: "{{ groups['masters'][0] }}"
+  become: true
+  gather_facts: false
+
+  roles:
+    - role: velero_restore

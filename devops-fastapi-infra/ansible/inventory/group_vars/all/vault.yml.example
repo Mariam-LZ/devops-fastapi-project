@@ -1,0 +1,42 @@
+# Application secrets
+vault_backend_secret_key: "CHANGE_ME"
+
+vault_postgres_admin_password: "CHANGE_ME"
+vault_postgres_app_password: "CHANGE_ME"
+
+vault_first_superuser_password: "CHANGE_ME"
+
+# Registry pull secret
+vault_gitlab_registry_username: "CHANGE_ME"
+vault_gitlab_registry_password: "CHANGE_ME"
+
+# Velero (MinIO credentials for backup storage)
+vault_velero_minio_access_key: "CHANGE_ME"
+vault_velero_minio_secret_key: "CHANGE_ME"
+
+# ArgoCD
+vault_argocd_admin_password: "CHANGE_ME"
+
+# ArgoCD Image Updater
+vault_gitlab_image_updater_username: "CHANGE_ME"
+vault_gitlab_image_updater_token: "CHANGE_ME"
+
+# Gitlab runner
+vault_gitlab_runner_registration_token: "CHANGE_ME"
+
+# Local services
+vault_minio_root_password: "CHANGE_ME"
+# -----------------------------------------------------------------------------
+# Setup instructions
+# -----------------------------------------------------------------------------
+#
+# Copy this example file:
+#
+# cp vault.yml.example vault.yml
+#
+# Update the values in vault.yml with your real secrets,
+# then encrypt the file:
+#
+# ansible-vault encrypt inventory/group_vars/vault.yml
+#
+# -----------------------------------------------------------------------------

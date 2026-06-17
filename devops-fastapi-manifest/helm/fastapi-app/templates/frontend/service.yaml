@@ -1,0 +1,22 @@
+{{- if .Values.frontend.enabled }}
+# Expose the frontend pods inside the cluster.
+# Public traffic reaches this Service through the Ingress when enabled.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-frontend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.frontend.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    # Must match the labels used by the frontend Deployment pods.
+    {{- include "fastapi-app.frontend.selectorLabels" . | nindent 4 }}
+{{- end }}

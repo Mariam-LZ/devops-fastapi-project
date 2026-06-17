@@ -1,0 +1,64 @@
+---
+- name: Ask for backup name
+  ansible.builtin.pause:
+    prompt: "Enter the Velero backup name to restore"
+  register: velero_restore_selected_backup_input
+  when: velero_restore_backup_name | length == 0
+
+- name: Set selected backup name
+  ansible.builtin.set_fact:
+    velero_restore_backup_name: "{{ velero_restore_selected_backup_input.user_input }}"
+  when: velero_restore_backup_name | length == 0
+
+- name: Validate selected backup exists
+  ansible.builtin.command:
+    cmd: >
+      kubectl get backups.velero.io {{ velero_restore_backup_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  changed_when: false
+
+- name: Get selected backup phase
+  ansible.builtin.command:
+    cmd: >
+      kubectl get backups.velero.io {{ velero_restore_backup_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{.status.phase}'
+  register: velero_restore_selected_backup_phase
+  changed_when: false
+
+- name: Stop if selected backup is not completed
+  ansible.builtin.fail:
+    msg: >-
+      Selected backup {{ velero_restore_backup_name }} is not Completed.
+      Current phase: {{ velero_restore_selected_backup_phase.stdout }}
+  when: velero_restore_selected_backup_phase.stdout != "Completed"
+
+- name: Ask for source namespace
+  ansible.builtin.pause:
+    prompt: "Enter source namespace contained in the backup, usually dev or prod"
+  register: velero_restore_source_namespace_input
+  when: velero_restore_source_namespace | length == 0
+
+- name: Set source namespace
+  ansible.builtin.set_fact:
+    velero_restore_source_namespace: "{{ velero_restore_source_namespace_input.user_input }}"
+  when: velero_restore_source_namespace | length == 0
+
+- name: Validate source namespace
+  ansible.builtin.assert:
+    that:
+      - velero_restore_source_namespace in ["dev", "prod"]
+    fail_msg: "Source namespace must be either dev or prod."
+
+- name: Set default test namespace
+  ansible.builtin.set_fact:
+    velero_restore_test_namespace: "restore-test-{{ velero_restore_source_namespace }}"
+  when: velero_restore_test_namespace | length == 0
+
+- name: Set default test restore name
+  ansible.builtin.set_fact:
+    velero_restore_test_name: >-
+      restore-test-{{ velero_restore_source_namespace }}-{{ velero_restore_backup_name | regex_replace('[^a-zA-Z0-9-]', '-') }}
+  when: velero_restore_test_name | length == 0

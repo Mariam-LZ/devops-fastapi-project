@@ -1,0 +1,7 @@
+project_dir: ansible
+
+exclude_paths:
+  - inventory/group_vars/all/vault.yml
+
+skip_list:
+  - yaml[new-line-at-end-of-file]

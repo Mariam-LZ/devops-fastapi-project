@@ -1,0 +1,11 @@
+api_token = "your-proxmox-api-token"
+
+ssh_keys = [
+  "ssh-ed25519 AAAA... ansiblehost"
+]
+
+jump_private_key_file = "~/.ssh/proxmox_ed25519"
+ssh_private_key_file  = "~/.ssh/ansiblehost"
+
+domain     = "example.com"
+acme_email = "admin@example.com"

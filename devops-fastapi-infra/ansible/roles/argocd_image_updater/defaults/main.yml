@@ -1,0 +1,3 @@
+---
+argocd_image_updater_release_name: argocd-image-updater
+argocd_image_updater_chart_ref: argo/argocd-image-updater

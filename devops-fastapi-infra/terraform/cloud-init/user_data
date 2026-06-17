@@ -1,0 +1,10 @@
+#cloud-config
+hostname: ${hostname}
+local-hostname: ${hostname}
+fqdn: ${hostname}.${domain}
+manage_etc_hosts: true
+package_upgrade: true
+users:
+  - default
+  - name: debian
+    sudo: ALL=(ALL) NOPASSWD:ALL

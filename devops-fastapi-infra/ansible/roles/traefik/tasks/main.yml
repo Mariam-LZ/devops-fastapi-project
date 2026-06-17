@@ -1,0 +1,20 @@
+---
+- name: Add Traefik Helm repository
+  kubernetes.core.helm_repository:
+    name: traefik
+    repo_url: https://traefik.github.io/charts
+
+- name: Generate Traefik Helm values file
+  ansible.builtin.template:
+    src: values-traefik.yml.j2
+    dest: "{{ traefik_values_path }}"
+    mode: "0644"
+
+- name: Install Traefik Helm chart
+  kubernetes.core.helm:
+    name: traefik
+    chart_ref: traefik/traefik
+    release_namespace: "{{ traefik_namespace }}"
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    update_repo_cache: true

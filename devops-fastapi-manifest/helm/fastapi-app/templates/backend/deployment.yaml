@@ -1,0 +1,95 @@
+{{- if .Values.backend.enabled }}
+# Deploy the backend application pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  # Fixed replica count is only used when autoscaling is disabled.
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+
+  selector:
+    matchLabels:
+      # Must match the labels defined in the pod template.
+      {{- include "fastapi-app.backend.selectorLabels" . | nindent 6 }}
+
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "fastapi-app.backend.selectorLabels" . | nindent 8 }}
+
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      # Required to pull private backend images from the GitLab Container Registry.
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      serviceAccountName: {{ .Release.Name }}-backend
+
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault          
+          {{- with .Values.backend.command }}
+          # Optional command override used to start the FastAPI application.
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.backend.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.port }}
+              protocol: TCP
+
+          # Load non-sensitive config from ConfigMap and sensitive values from Secrets.
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            {{- range .Values.backend.envFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+
+          # Readiness controls when the pod can receive traffic.
+          readinessProbe:
+            httpGet:
+              path: /api/v1/utils/health-check/
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          # Liveness restarts the pod if the backend becomes unhealthy.
+          livenessProbe:
+            httpGet:
+              path: /api/v1/utils/health-check/
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+{{- end }}

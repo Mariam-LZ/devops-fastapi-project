@@ -1,0 +1,6 @@
+---
+- name: Run Kubernetes security audit
+  hosts: "{{ groups['masters'][0] }}"
+  become: true
+  roles:
+    - kube_bench

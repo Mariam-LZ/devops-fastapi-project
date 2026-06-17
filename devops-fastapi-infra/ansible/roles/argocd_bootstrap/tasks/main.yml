@@ -1,0 +1,40 @@
+---
+- name: Create temporary directory for manifest repository
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: manifest
+  register: argocd_bootstrap_manifest_repo_tmp
+
+- name: Clone manifest repository
+  ansible.builtin.git:
+    repo: "https://{{ vault_gitlab_image_updater_username }}:{{ vault_gitlab_image_updater_token }}@gitlab.com/devops-glmt/devops-fastapi-manifest.git"
+    dest: "{{ argocd_bootstrap_manifest_repo_tmp.path }}"
+    version: main
+    force: true
+  no_log: true
+
+- name: Find ArgoCD application manifests
+  ansible.builtin.find:
+    paths: "{{ argocd_bootstrap_manifest_repo_tmp.path }}/argocd"
+    patterns:
+      - "*.yaml"
+      - "*.yml"
+    recurse: true
+  register: argocd_bootstrap_application_manifests
+
+- name: Show found ArgoCD application manifests
+  ansible.builtin.debug:
+    var: argocd_bootstrap_application_manifests.files
+
+- name: Apply ArgoCD application manifests
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    src: "{{ item.path }}"
+  loop: "{{ argocd_bootstrap_application_manifests.files }}"
+
+- name: Remove temporary manifest repository
+  ansible.builtin.file:
+    path: "{{ argocd_bootstrap_manifest_repo_tmp.path }}"
+    state: absent
+  when: argocd_bootstrap_manifest_repo_tmp.path is defined

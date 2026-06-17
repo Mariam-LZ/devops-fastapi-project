@@ -1,0 +1,138 @@
+{{- if and .Values.backend.enabled .Values.backend.prometheusRule.enabled }}
+# PrometheusRule defines alerting rules for the backend.
+# These rules are picked up by the Prometheus Operator from kube-prometheus-stack.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+    {{- with .Values.backend.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: backend.rules
+      rules:
+        # Trigger when Prometheus cannot scrape any backend instance.
+        - alert: BackendUnavailable
+          expr: |
+            sum(up{service="{{ .Release.Name }}-backend"}) == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Backend is unavailable"
+            description: "No backend instance is currently scraped by Prometheus."
+
+        # Trigger when more than 5% of backend HTTP requests fail.
+        # This requires the application to expose http_requests_total metrics.
+        - alert: BackendHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{service="{{ .Release.Name }}-backend", status!~"2xx|3xx"}[5m]))
+            /
+            sum(rate(http_requests_total{service="{{ .Release.Name }}-backend"}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend high error rate"
+            description: "More than 5% of backend HTTP requests are failing for 5 minutes."
+
+        # Trigger when the backend p95 latency is above 500ms.
+        # This requires the application to expose http_request_duration_seconds_bucket metrics.
+        - alert: BackendHighLatency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{service="{{ .Release.Name }}-backend"}[5m])
+              )
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Backend high latency"
+            description: "Backend p95 latency is above 500ms for 5 minutes."
+
+{{- end }}
+
+---
+{{- if and .Values.postgresqlMonitoring .Values.postgresqlMonitoring.prometheusRule .Values.postgresqlMonitoring.prometheusRule.enabled }}
+# PrometheusRule defines alerting rules for PostgreSQL.
+# These rules are picked up by the Prometheus Operator from kube-prometheus-stack.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+    {{- with .Values.postgresqlMonitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: postgresql.rules
+      rules:
+        # Trigger when Prometheus cannot scrape PostgreSQL exporter.
+        - alert: PostgreSQLExporterDown
+          expr: |
+            sum(up{namespace="{{ .Values.global.namespace }}", job=~".*postgresql.*"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL exporter is down"
+            description: "Prometheus cannot scrape PostgreSQL exporter in namespace {{ .Values.global.namespace }}."
+
+        # Trigger when PostgreSQL memory usage is high.
+        - alert: PostgreSQLHighMemoryUsage
+          expr: |
+            (
+              sum(container_memory_working_set_bytes{namespace="{{ .Values.global.namespace }}", pod=~".*postgresql.*", container!="", image!=""})
+              /
+              sum(kube_pod_container_resource_limits{namespace="{{ .Values.global.namespace }}", pod=~".*postgresql.*", resource="memory"})
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL high memory usage"
+            description: "PostgreSQL memory usage is above 85% of its configured limit for 5 minutes."
+
+        # Trigger when PostgreSQL CPU usage is high.
+        - alert: PostgreSQLHighCPUUsage
+          expr: |
+            (
+              sum(rate(container_cpu_usage_seconds_total{namespace="{{ .Values.global.namespace }}", pod=~".*postgresql.*", container!="", image!=""}[5m]))
+              /
+              sum(kube_pod_container_resource_limits{namespace="{{ .Values.global.namespace }}", pod=~".*postgresql.*", resource="cpu"})
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL high CPU usage"
+            description: "PostgreSQL CPU usage is above 85% of its configured limit for 5 minutes."
+
+        # Trigger when PostgreSQL persistent volume is almost full.
+        - alert: PostgreSQLVolumeAlmostFull
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes{namespace="{{ .Values.global.namespace }}", persistentvolumeclaim=~".*postgresql.*"}
+              /
+              kubelet_volume_stats_capacity_bytes{namespace="{{ .Values.global.namespace }}", persistentvolumeclaim=~".*postgresql.*"}
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL volume almost full"
+            description: "PostgreSQL PVC usage is above 85% in namespace {{ .Values.global.namespace }}."
+{{- end }}

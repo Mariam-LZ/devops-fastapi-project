@@ -1,0 +1,21 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+
+# Kubernetes version pinned for cluster consistency.
+kubernetesVersion: "v{{ masters_k8s_version }}"
+
+# Stable API endpoint exposed through HAProxy/Keepalived.
+controlPlaneEndpoint: "{{ control_plane_endpoint }}"
+
+networking:
+  # Pod network range used by the cluster CNI.
+  podSubnet: "{{ k8s_pod_network_cidr }}"
+
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+
+nodeRegistration:
+
+  # Explicitly use containerd as the Kubernetes container runtime.
+  criSocket: unix:///run/containerd/containerd.sock

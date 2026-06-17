@@ -1,0 +1,39 @@
+---
+- name: Install HAProxy and Keepalived
+  ansible.builtin.apt:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+    update_cache: true
+
+# HAProxy exposes a stable Kubernetes API endpoint through the virtual IP
+# and forwards traffic to the available control plane nodes.
+- name: Configure HAProxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0644"
+  notify: Restart HAProxy
+
+# Keepalived manages the virtual IP failover between master nodes.
+# If the active master becomes unavailable, another node can take ownership
+# of the VIP and keep the Kubernetes API endpoint reachable.
+- name: Configure Keepalived
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: "0644"
+  notify: Restart Keepalived
+
+- name: Enable HAProxy
+  ansible.builtin.service:
+    name: haproxy
+    enabled: true
+    state: started
+
+- name: Enable Keepalived
+  ansible.builtin.service:
+    name: keepalived
+    enabled: true
+    state: started

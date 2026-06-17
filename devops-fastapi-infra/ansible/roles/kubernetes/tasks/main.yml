@@ -1,0 +1,54 @@
+---
+- name: Create Kubernetes APT keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Download Kubernetes signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_k8s_apt_version }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: "0644"
+
+# Use the official Kubernetes repository to control cluster package versions.
+- name: Add Kubernetes APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc]
+      https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_k8s_apt_version }}/deb/ /
+    state: present
+    filename: kubernetes
+
+# kubelet manages node workloads, kubeadm bootstraps the cluster,
+# and kubectl provides cluster administration commands.
+- name: Install Kubernetes packages
+  ansible.builtin.apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+      - python3-kubernetes
+      - containernetworking-plugins
+    state: present
+    update_cache: true
+  notify:
+    - Restart kubelet
+    - Restart containerd
+
+# Prevent unintended Kubernetes version upgrades between nodes,
+# which could break cluster compatibility.
+- name: Hold Kubernetes packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Ensure kubelet service is enabled and started
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+    state: started

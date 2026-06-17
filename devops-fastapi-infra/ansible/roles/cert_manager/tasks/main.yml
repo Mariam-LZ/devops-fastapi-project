@@ -1,0 +1,52 @@
+---
+- name: Download cert-manager manifest
+  ansible.builtin.get_url:
+    url: "{{ cert_manager_manifest_url }}"
+    dest: "{{ cert_manager_manifest_path }}"
+    mode: "0644"
+
+- name: Deploy cert-manager
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    src: "{{ cert_manager_manifest_path }}"
+
+- name: Wait for cert-manager pods to be ready
+  ansible.builtin.command: >
+    kubectl wait --namespace cert-manager
+    --for=condition=Ready pod
+    --all
+    --timeout=180s
+  changed_when: false
+
+- name: Wait for cert-manager ClusterIssuer CRD to be established
+  ansible.builtin.command: >
+    kubectl wait
+    --for=condition=Established
+    crd/clusterissuers.cert-manager.io
+    --timeout=180s
+  changed_when: false
+
+- name: Generate self-signed ClusterIssuer manifest
+  ansible.builtin.template:
+    src: clusterissuer-selfsigned.yml.j2
+    dest: /tmp/clusterissuer-selfsigned.yml
+    mode: "0644"
+
+- name: Apply self-signed ClusterIssuer
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    src: /tmp/clusterissuer-selfsigned.yml
+
+- name: Generate Let's Encrypt ClusterIssuer manifest
+  ansible.builtin.template:
+    src: clusterissuer-letsencrypt.yml.j2
+    dest: /tmp/clusterissuer-letsencrypt.yml
+    mode: "0644"
+
+- name: Apply Let's Encrypt ClusterIssuer
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: /etc/kubernetes/admin.conf
+    src: /tmp/clusterissuer-letsencrypt.yml

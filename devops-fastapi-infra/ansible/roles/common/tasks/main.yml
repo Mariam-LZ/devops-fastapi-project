@@ -1,0 +1,95 @@
+---
+# Kubernetes requires swap disabled for stable scheduling and memory management.
+- name: Disable swap temporarily
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Disable swap permanently in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s.*)$'
+    replace: '# \1'
+
+- name: Configure Kubernetes kernel modules
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+    mode: '0644'
+
+- name: Load overlay kernel module
+  community.general.modprobe:
+    name: overlay
+    state: present
+
+# Required for Kubernetes networking and most CNI plugins.
+- name: Load br_netfilter kernel module
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
+
+- name: Install Kubernetes dependencies
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - nfs-common
+      - open-iscsi
+      - jq
+      - git
+      - unzip
+      - bash-completion
+      - net-tools
+      - ipvsadm
+      - ufw
+    state: present
+    update_cache: true
+
+# Required by Longhorn for iSCSI volume attachment.
+- name: Ensure iscsid service is enabled and started
+  ansible.builtin.service:
+    name: iscsid
+    state: started
+    enabled: true
+
+# Kubernetes networking and HA virtual IP support.
+- name: Configure Kubernetes sysctl settings
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/k8s.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward = 1
+      net.ipv4.ip_nonlocal_bind = 1
+    mode: '0644'
+
+- name: Apply sysctl settings
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+# Useful during early cluster bootstrap before internal DNS is fully available.
+- name: Configure /etc/hosts for Kubernetes nodes
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ item.ip }} {{ item.name }}"
+    state: present
+  loop: "{{ k8s_hosts }}"
+
+# Allow internal Kubernetes node-to-node communication.
+- name: Allow internal Kubernetes cluster traffic
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k8s_internal_cidr }}"
+    comment: "Kubernetes cluster internal traffic"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Reboot nodes if required
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+  when:
+    - reboot_required is defined
+    - reboot_required

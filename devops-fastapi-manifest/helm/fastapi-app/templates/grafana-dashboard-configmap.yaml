@@ -1,0 +1,15 @@
+{{- if .Values.grafanaDashboards.enabled }}
+# Store the Grafana dashboard as a ConfigMap so it can be versioned in Git.
+# Grafana imports it automatically through the kube-prometheus-stack sidecar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fastapi-app.fullname" . }}-grafana-dashboard
+  namespace: {{ .Values.grafanaDashboards.namespace | default "monitoring" }}
+  labels:
+    # Required by the Grafana sidecar to discover and import this dashboard.
+    grafana_dashboard: "1"
+data:
+  devops-fastapi-platform.json: |-
+{{ .Files.Get "dashboards/devops-fastapi-platform.json" | indent 4 }}
+{{- end }}

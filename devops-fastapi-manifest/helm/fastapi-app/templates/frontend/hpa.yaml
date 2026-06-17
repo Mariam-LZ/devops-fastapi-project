@@ -1,0 +1,30 @@
+{{- if and .Values.frontend.enabled .Values.frontend.autoscaling.enabled }}
+# Automatically scale the frontend Deployment based on CPU usage.
+# This requires metrics-server to be installed in the cluster.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-frontend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  # Target the frontend Deployment managed by this Helm release.
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-frontend
+
+  minReplicas: {{ .Values.frontend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.frontend.autoscaling.maxReplicas }}
+
+  metrics:
+    # Scale when average frontend pod CPU usage goes above the configured threshold.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.frontend.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

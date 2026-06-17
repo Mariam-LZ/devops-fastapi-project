@@ -1,0 +1,36 @@
+---
+- name: List available Velero backups
+  ansible.builtin.include_tasks: list_backups.yml
+  tags:
+    - list
+    - restore
+
+- name: Select and validate Velero backup
+  ansible.builtin.include_tasks: select_backup.yml
+  tags:
+    - select
+    - restore
+
+- name: Restore selected backup into test namespace
+  ansible.builtin.include_tasks: restore_test.yml
+  tags:
+    - test
+    - restore
+
+- name: Validate test restore
+  ansible.builtin.include_tasks: validate_test.yml
+  tags:
+    - validate
+    - restore
+
+- name: Confirm final restore
+  ansible.builtin.include_tasks: confirm_final_restore.yml
+  tags:
+    - confirm
+    - restore
+
+- name: Restore selected backup into final target namespace
+  ansible.builtin.include_tasks: restore_target.yml
+  tags:
+    - final
+    - restore

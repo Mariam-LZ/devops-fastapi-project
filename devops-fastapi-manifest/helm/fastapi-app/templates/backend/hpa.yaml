@@ -1,0 +1,42 @@
+{{- if and .Values.backend.enabled .Values.backend.autoscaling.enabled }}
+# Automatically scale the backend Deployment based on resource usage.
+# This requires metrics-server to be installed in the cluster.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  # Target the backend Deployment managed by this Helm release.
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-backend
+
+  minReplicas: {{ .Values.backend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backend.autoscaling.maxReplicas }}
+
+  metrics:
+    {{- if .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+    # Scale when average backend pod CPU usage goes above the configured threshold.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+
+    {{- if .Values.backend.autoscaling.targetMemoryUtilizationPercentage }}
+    # Scale when average backend pod memory usage goes above the configured threshold.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.backend.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

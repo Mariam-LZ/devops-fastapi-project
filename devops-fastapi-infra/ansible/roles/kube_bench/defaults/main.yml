@@ -1,0 +1,4 @@
+---
+kube_bench_namespace: security
+kube_bench_job_name: kube-bench
+kube_bench_image: aquasec/kube-bench:latest

@@ -1,0 +1,23 @@
+---
+- name: Get available Velero backups
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - get
+      - backups.velero.io
+      - -n
+      - "{{ velero_restore_namespace }}"
+      - --kubeconfig
+      - "{{ velero_restore_kubeconfig_path }}"
+      - -o
+      - >-
+        custom-columns=NAME:.metadata.name,PHASE:.status.phase,
+        ERRORS:.status.errors,WARNINGS:.status.warnings,
+        SCHEDULE:.metadata.labels.velero\.io/schedule-name,
+        CREATED:.metadata.creationTimestamp
+  register: velero_restore_available_backups
+  changed_when: false
+
+- name: Show available Velero backups
+  ansible.builtin.debug:
+    msg: "{{ velero_restore_available_backups.stdout_lines }}"

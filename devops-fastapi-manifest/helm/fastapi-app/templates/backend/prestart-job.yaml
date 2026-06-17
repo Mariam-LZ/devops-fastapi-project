@@ -1,0 +1,63 @@
+{{- if and .Values.backend.enabled .Values.backend.prestart.enabled }}
+# Run a prestart job before the backend deployment.
+# It uses the backend image and environment to execute initialization tasks.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+  name: {{ .Release.Name }}-backend-prestart
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend-prestart
+spec:
+  # Number of retries before the job is marked as failed.
+  backoffLimit: {{ .Values.backend.prestart.backoffLimit }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "fastapi-app.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend-prestart
+
+    spec:
+      restartPolicy: OnFailure
+
+      {{- with .Values.global.imagePullSecrets }}
+      # Required to pull the private backend image from the GitLab Container Registry.
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # Reuse the backend ServiceAccount.
+      serviceAccountName: {{ .Release.Name }}-backend
+
+      containers:
+        - name: prestart
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          # Command used for application initialization.
+          command:
+            {{- toYaml .Values.backend.prestart.command | nindent 12 }}
+
+          # Load the same non-sensitive config and secrets as the backend.
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            {{- range .Values.backend.envFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+{{- end }}

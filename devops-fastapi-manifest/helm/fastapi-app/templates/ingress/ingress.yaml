@@ -1,0 +1,47 @@
+{{- if and .Values.ingress .Values.ingress.enabled }}
+# Expose the application through the configured ingress controller.
+# In production, this is handled by Traefik with TLS managed by cert-manager.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+{{ toYaml . | trim | indent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+
+  # Enable HTTPS when TLS is configured for this environment.
+  {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          # Route web traffic to the frontend service.
+          - path: {{ .Values.ingress.frontend.path }}
+            pathType: {{ .Values.ingress.frontend.pathType }}
+            backend:
+              service:
+                name: {{ .Release.Name }}-frontend
+                port:
+                  name: http
+
+          # Route API traffic to the backend service.
+          - path: {{ .Values.ingress.backend.path }}
+            pathType: {{ .Values.ingress.backend.pathType }}
+            backend:
+              service:
+                name: {{ .Release.Name }}-backend
+                port:
+                  name: http
+{{- end }}

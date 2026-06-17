@@ -1,0 +1,67 @@
+# CI pipeline used to validate and secure Helm/Kubernetes manifests before merge.
+stages:
+  - validate
+  - security
+
+# Lint the Helm chart to detect syntax errors and chart structure issues.
+helm_lint:
+  stage: validate
+  image:
+    name: alpine/helm:latest
+    entrypoint: [""]
+  rules:
+    - changes:
+        - helm/**/*
+        - .gitlab-ci.yml
+  script:
+    - helm lint helm/fastapi-app
+
+# Render the Helm chart for both environments to ensure templates compile correctly.
+helm_template:
+  stage: validate
+  image:
+    name: alpine/helm:latest
+    entrypoint: [""]
+  rules:
+    - changes:
+        - helm/**/*
+        - .gitlab-ci.yml
+  script:
+    - helm template fastapi-app-dev helm/fastapi-app -f helm/fastapi-app/values-dev.yaml > dev-rendered.yaml
+    - helm template fastapi-app-prod helm/fastapi-app -f helm/fastapi-app/values-prod.yaml > prod-rendered.yaml
+  artifacts:
+    paths:
+      - dev-rendered.yaml
+      - prod-rendered.yaml
+    expire_in: 1 hour
+
+# Scan rendered Kubernetes manifests for security misconfigurations.
+# Kept as allow_failure at first because existing manifests may need triage.
+trivy_config_manifests:
+  stage: security
+  allow_failure: true
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs:
+    - job: helm_template
+      artifacts: true
+  rules:
+    - changes:
+        - helm/**/*
+        - .gitlab-ci.yml
+  script:
+    - trivy config dev-rendered.yaml
+    - trivy config prod-rendered.yaml
+
+# Detect hardcoded secrets such as tokens, passwords, API keys or private keys.
+gitleaks:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  rules:
+    - changes:
+        - "**/*"
+  script:
+    - gitleaks detect --source . --verbose --redact

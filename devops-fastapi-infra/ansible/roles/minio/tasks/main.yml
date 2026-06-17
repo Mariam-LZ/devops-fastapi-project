@@ -1,0 +1,212 @@
+---
+- name: Create MinIO directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ minio_dir }}"
+    - "{{ minio_data_dir }}"
+
+- name: Deploy MinIO Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ minio_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart MinIO
+
+- name: Start MinIO container
+  community.docker.docker_compose_v2:
+    project_src: "{{ minio_dir }}"
+    state: present
+
+# Velero pods must reach MinIO API and receive return traffic.
+- name: Ensure UFW is installed on service node
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Allow MinIO API from Kubernetes node network
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k8s_internal_cidr }}"
+    port: "{{ minio_api_port }}"
+    proto: tcp
+    comment: "Allow MinIO API from Kubernetes nodes"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Allow MinIO API from Kubernetes pod network
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ k8s_pod_network_cidr }}"
+    port: "{{ minio_api_port }}"
+    proto: tcp
+    comment: "Allow MinIO API from Kubernetes pods"
+  when: ansible_facts['os_family'] == 'Debian'
+
+# Get the current Calico IP blocks assigned to each Kubernetes node.
+# These blocks are the real Pod CIDRs used by Calico, for example:
+# 192.168.97.192/26=worker-3
+#
+# We delegate this command to the first master because kubectl and the
+# Kubernetes admin kubeconfig are available there.
+- name: Collect Calico pod CIDR/internalIP mapping
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig /etc/kubernetes/admin.conf
+      get blockaffinities.crd.projectcalico.org
+      -o jsonpath='{range .items[*]}{.spec.cidr}{"="}{.spec.node}{"\n"}{end}'
+  register: minio_calico_routes
+  delegate_to: "{{ groups['masters'][0] }}"
+  changed_when: false
+
+# Remove the old broad route to the whole Kubernetes Pod network if it exists.
+# This kind of route is too wide because it sends all Pod traffic back to
+# a single node, even when the Pod actually runs on another worker.
+#
+# Example of route we do NOT want anymore:
+# 192.168.0.0/16 via 192.168.1.120
+- name: Remove broad pod CIDR route if present
+  ansible.builtin.command:
+    cmd: "ip -4 route del {{ k8s_pod_network_cidr }}"
+  register: minio_remove_broad_route
+  changed_when: minio_remove_broad_route.rc == 0
+  failed_when: false
+
+# Remove invalid routes that send the local LAN through Kubernetes nodes.
+# services-1 is already directly connected to 192.168.1.0/24 through eth0,
+# so this network must NOT be routed through a master or worker.
+#
+# Bad example:
+# 192.168.1.0/24 via 192.168.1.111
+#
+# Good expected route:
+# 192.168.1.0/24 dev eth0 scope link src 192.168.1.140
+- name: Remove invalid LAN routes through Kubernetes nodes
+  ansible.builtin.command:
+    cmd: "ip -4 route del 192.168.1.0/24 via {{ hostvars[item].ansible_host }} dev eth0"
+  loop: "{{ groups['masters'] + groups['workers'] }}"
+  register: minio_remove_invalid_lan_routes
+  changed_when: minio_remove_invalid_lan_routes.rc == 0
+  failed_when: false
+
+# Create or update one return route per Calico Pod CIDR.
+# Each Calico block is routed back through the node that owns it.
+#
+# Example:
+# Calico says:
+#   192.168.97.192/26=worker-3
+#
+# Ansible inventory says:
+#   worker-3 ansible_host=192.168.1.122
+#
+# So the route becomes:
+#   ip route replace 192.168.97.192/26 via 192.168.1.122
+#
+# This allows services-1 / MinIO to reply to Pods on the correct node.
+- name: Ensure return route for each Calico pod CIDR
+  ansible.builtin.command:
+    cmd: >-
+      ip -4 route replace {{ item.split("=")[0] }}
+      via {{ hostvars[item.split("=")[1]].ansible_host }}
+  loop: "{{ minio_calico_routes.stdout_lines | reject('equalto', '') | list }}"
+  register: minio_calico_routes_apply
+  changed_when: true
+
+# ---------------------------------------------------------------------------
+# MinIO client (mc) setup and Velero resource provisioning
+# ---------------------------------------------------------------------------
+
+- name: Install MinIO client
+  ansible.builtin.get_url:
+    url: https://dl.min.io/client/mc/release/linux-amd64/mc
+    dest: /usr/local/bin/mc
+    mode: "0755"
+
+# Idempotent: mc alias set overwrites an existing alias with the same name.
+- name: Configure mc alias for local MinIO
+  ansible.builtin.command:
+    cmd: >-
+      mc alias set local
+      http://localhost:{{ minio_api_port }}
+      {{ minio_root_user }}
+      {{ minio_root_password }}
+  changed_when: false
+  no_log: true
+
+- name: Create Velero bucket
+  ansible.builtin.command:
+    cmd: >-
+      mc mb --ignore-existing
+      local/{{ velero_bucket }}
+  register: minio_velero_mb
+  changed_when: "'Bucket created' in minio_velero_mb.stdout"
+
+# A scoped policy limits the Velero user to only the velero bucket.
+- name: Write Velero MinIO policy file
+  ansible.builtin.copy:
+    dest: /tmp/velero-policy.json
+    mode: "0600"
+    content: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3:*"],
+            "Resource": [
+              "arn:aws:s3:::{{ velero_bucket }}",
+              "arn:aws:s3:::{{ velero_bucket }}/*"
+            ]
+          }
+        ]
+      }
+
+- name: Create Velero MinIO policy
+  ansible.builtin.command:
+    cmd: >-
+      mc admin policy create local
+      velero-policy
+      /tmp/velero-policy.json
+  register: minio_velero_policy
+  changed_when: minio_velero_policy.rc == 0
+  failed_when: minio_velero_policy.rc != 0 and 'already exists' not in minio_velero_policy.stderr
+
+- name: Remove Velero policy temp file
+  ansible.builtin.file:
+    path: /tmp/velero-policy.json
+    state: absent
+
+- name: Check if Velero MinIO user exists
+  ansible.builtin.command:
+    cmd: >-
+      mc admin user info local
+      {{ vault_velero_minio_access_key }}
+  register: minio_velero_user_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Create Velero MinIO user
+  ansible.builtin.command:
+    cmd: >-
+      mc admin user add local
+      {{ vault_velero_minio_access_key }}
+      {{ vault_velero_minio_secret_key }}
+  when: minio_velero_user_check.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Attach Velero policy to Velero user
+  ansible.builtin.command:
+    cmd: >-
+      mc admin policy attach local
+      velero-policy
+      --user
+      {{ vault_velero_minio_access_key }}
+  register: minio_velero_policy_attach
+  changed_when: minio_velero_policy_attach.rc == 0
+  failed_when: minio_velero_policy_attach.rc != 0 and 'already attached' not in minio_velero_policy_attach.stderr
+  no_log: true

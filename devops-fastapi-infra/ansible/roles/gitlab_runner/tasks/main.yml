@@ -1,0 +1,66 @@
+---
+- name: Create GitLab Runner directory
+  ansible.builtin.file:
+    path: "{{ gitlab_runner_dir }}"
+    state: directory
+    mode: "0700"
+
+# Deploy the self-hosted GitLab Runner configuration.
+- name: Deploy GitLab Runner Docker Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ gitlab_runner_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart GitLab Runner
+
+- name: Start GitLab Runner container
+  community.docker.docker_compose_v2:
+    project_src: "{{ gitlab_runner_dir }}"
+    state: present
+
+# Check whether the runner has already been registered to GitLab.
+- name: Check GitLab Runner registration status
+  ansible.builtin.stat:
+    path: "{{ gitlab_runner_dir }}/config/config.toml"
+  register: gitlab_runner_config
+
+- name: Register GitLab Runner
+  ansible.builtin.command: >
+   docker exec gitlab-runner gitlab-runner register
+   --non-interactive
+   --url {{ gitlab_runner_url }}
+   --registration-token {{ gitlab_runner_token }}
+   --executor {{ gitlab_runner_executor }}
+   --docker-image {{ gitlab_runner_docker_image }}
+   --description {{ gitlab_runner_name }}
+   {% if gitlab_runner_docker_privileged | bool %}--docker-privileged{% endif %}
+  when: not gitlab_runner_config.stat.exists
+  changed_when: true
+  no_log: true
+
+- name: Refresh GitLab Runner registration status
+  ansible.builtin.stat:
+    path: "{{ gitlab_runner_dir }}/config/config.toml"
+  register: gitlab_runner_config_after
+
+- name: Remove existing privileged settings to avoid TOML key duplication
+  ansible.builtin.replace:
+    path: "{{ gitlab_runner_dir }}/config/config.toml"
+    regexp: '^\s*privileged\s*=\s*(true|false)\s*$\n?'
+    replace: ''
+  when:
+    - gitlab_runner_docker_privileged | bool
+    - gitlab_runner_config_after.stat.exists
+  notify: Restart GitLab Runner
+
+- name: Ensure privileged setting exists for Docker executor
+  ansible.builtin.lineinfile:
+    path: "{{ gitlab_runner_dir }}/config/config.toml"
+    insertafter: '^\s*\[runners\.docker\]\s*$'
+    line: '    privileged = true'
+    firstmatch: true
+    state: present
+  when:
+    - gitlab_runner_docker_privileged | bool
+    - gitlab_runner_config_after.stat.exists
+  notify: Restart GitLab Runner

@@ -1,0 +1,12 @@
+---
+# Additional master nodes join the existing HA control plane
+# using the join command generated on the first master.
+- name: Join node as additional Kubernetes control plane
+  ansible.builtin.command: "{{ hostvars[groups['masters'][0]].masters_kubeadm_control_plane_join_command }}"
+  args:
+
+    # Prevent rejoining nodes already part of the cluster.
+    creates: /etc/kubernetes/kubelet.conf
+
+  changed_when: true
+  when: inventory_hostname != groups['masters'][0]

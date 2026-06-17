@@ -1,0 +1,14 @@
+helm:
+  parameters:
+  - name: backend.image.repository
+    value: registry.gitlab.com/devops-glmt/devops-fastapi-app/backend
+    forcestring: true
+  - name: backend.image.tag
+    value: dev-4d210265
+    forcestring: true
+  - name: frontend.image.repository
+    value: registry.gitlab.com/devops-glmt/devops-fastapi-app/frontend
+    forcestring: true
+  - name: frontend.image.tag
+    value: dev-6f1f0bdd
+    forcestring: true

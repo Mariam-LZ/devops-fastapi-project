@@ -1,0 +1,47 @@
+---
+- name: Ask final target namespace
+  ansible.builtin.pause:
+    prompt: "Test restore validated. Enter final target namespace: dev or prod"
+  register: velero_restore_target_namespace_input
+  when: velero_restore_target_namespace | length == 0
+
+- name: Set final target namespace
+  ansible.builtin.set_fact:
+    velero_restore_target_namespace: "{{ velero_restore_target_namespace_input.user_input }}"
+  when: velero_restore_target_namespace | length == 0
+
+- name: Validate final target namespace
+  ansible.builtin.assert:
+    that:
+      - velero_restore_target_namespace in ["dev", "prod"]
+    fail_msg: "Final target namespace must be either dev or prod."
+
+- name: Ask final restore confirmation
+  ansible.builtin.pause:
+    prompt: "Type RESTORE to confirm final restore into {{ velero_restore_target_namespace }}"
+  register: velero_restore_final_restore_confirmation
+  when: not velero_restore_confirm_final | bool
+
+- name: Validate final restore confirmation
+  ansible.builtin.assert:
+    that:
+      - velero_restore_confirm_final | bool or velero_restore_final_restore_confirmation.user_input == "RESTORE"
+    fail_msg: "Final restore cancelled."
+
+- name: Protect production restore
+  ansible.builtin.assert:
+    that:
+      - velero_restore_allow_prod | bool
+      - velero_restore_prod_confirm_text == "RESTORE_PROD"
+    fail_msg: >-
+      Production restore blocked.
+      To restore prod, pass:
+      -e velero_restore_allow_prod=true
+      -e velero_restore_prod_confirm_text=RESTORE_PROD
+  when: velero_restore_target_namespace == "prod"
+
+- name: Set final restore name
+  ansible.builtin.set_fact:
+    velero_restore_final_name: >-
+      restore-{{ velero_restore_target_namespace }}-{{ velero_restore_backup_name | regex_replace('[^a-zA-Z0-9-]', '-') }}
+  when: velero_restore_final_name | length == 0

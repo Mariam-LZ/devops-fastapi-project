@@ -1,0 +1,168 @@
+---
+- name: Check if test restore already exists
+  ansible.builtin.command:
+    cmd: >
+      kubectl get restores.velero.io {{ velero_restore_test_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_test_restore_existing
+  failed_when: false
+  changed_when: false
+
+- name: Remove finalizer from previous test restore if needed
+  ansible.builtin.command:
+    cmd: >
+      kubectl patch restores.velero.io {{ velero_restore_test_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      --type merge
+      -p '{"metadata":{"finalizers":[]}}'
+  when:
+    - velero_restore_test_restore_existing.rc == 0
+    - velero_restore_recreate_test_namespace | bool
+  changed_when: true
+  failed_when: false
+
+- name: Delete previous test restore
+  ansible.builtin.command:
+    cmd: >
+      kubectl delete restores.velero.io {{ velero_restore_test_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      --ignore-not-found
+  when:
+    - velero_restore_test_restore_existing.rc == 0
+    - velero_restore_recreate_test_namespace | bool
+  changed_when: true
+  failed_when: false
+
+- name: Delete previous test PodVolumeRestores
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      kubectl get podvolumerestores.velero.io \
+        -n {{ velero_restore_namespace }} \
+        --kubeconfig {{ velero_restore_kubeconfig_path }} \
+        --no-headers \
+      | grep {{ velero_restore_test_name }} \
+      | awk '{print $1}' \
+      | xargs -r kubectl delete podvolumerestores.velero.io \
+        -n {{ velero_restore_namespace }} \
+        --kubeconfig {{ velero_restore_kubeconfig_path }}
+    executable: /bin/bash
+  when:
+    - velero_restore_test_restore_existing.rc == 0
+    - velero_restore_recreate_test_namespace | bool
+  changed_when: true
+  failed_when: false
+
+- name: Delete previous test resource modifier ConfigMap
+  kubernetes.core.k8s:
+    state: absent
+    kubeconfig: "{{ velero_restore_kubeconfig_path }}"
+    api_version: v1
+    kind: ConfigMap
+    namespace: "{{ velero_restore_namespace }}"
+    name: "{{ velero_restore_test_name }}-resource-modifier"
+  when:
+    - velero_restore_test_restore_existing.rc == 0
+    - velero_restore_recreate_test_namespace | bool
+
+- name: Stop if test restore already exists and auto-clean is disabled
+  ansible.builtin.fail:
+    msg: >-
+      Test restore {{ velero_restore_test_name }} already exists.
+      Set velero_restore_recreate_test_namespace=true to clean it automatically,
+      or delete the existing Restore object manually.
+  when:
+    - velero_restore_test_restore_existing.rc == 0
+    - not velero_restore_recreate_test_namespace | bool
+
+- name: Remove previous test namespace
+  kubernetes.core.k8s:
+    state: absent
+    kubeconfig: "{{ velero_restore_kubeconfig_path }}"
+    api_version: v1
+    kind: Namespace
+    name: "{{ velero_restore_test_namespace }}"
+  when: velero_restore_recreate_test_namespace | bool
+
+- name: Create test namespace
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ velero_restore_kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ velero_restore_test_namespace }}"
+
+- name: Create test restore PVC resource modifier ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ velero_restore_kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ velero_restore_test_name }}-resource-modifier"
+        namespace: "{{ velero_restore_namespace }}"
+        labels:
+          velero.io/plugin-config: ""
+          velero.io/resource-modifier: "true"
+      data:
+        resource-modifiers.yaml: "{{ lookup('template', 'resource-modifier-remove-pvc-volume.yml.j2') }}"
+  vars:
+    source_namespace: "{{ velero_restore_source_namespace }}"
+  when: velero_restore_remove_pvc_volume_name | default(true) | bool
+
+- name: Render test restore manifest
+  ansible.builtin.template:
+    src: restore.yml.j2
+    dest: "/tmp/{{ velero_restore_test_name }}.yml"
+    mode: "0644"
+  vars:
+    restore_name: "{{ velero_restore_test_name }}"
+    source_namespace: "{{ velero_restore_source_namespace }}"
+    target_namespace: "{{ velero_restore_test_namespace }}"
+
+- name: Apply test restore manifest
+  ansible.builtin.command:
+    cmd: >
+      kubectl apply -f /tmp/{{ velero_restore_test_name }}.yml
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_test_restore_apply
+  changed_when: "'created' in velero_restore_test_restore_apply.stdout or 'configured' in velero_restore_test_restore_apply.stdout"
+
+- name: Wait for test restore completion
+  ansible.builtin.command:
+    cmd: >
+      kubectl get restores.velero.io {{ velero_restore_test_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{.status.phase}'
+  register: velero_restore_test_restore_phase
+  changed_when: false
+  until: velero_restore_test_restore_phase.stdout in ["Completed", "PartiallyFailed", "Failed"]
+  retries: "{{ velero_restore_wait_retries }}"
+  delay: "{{ velero_restore_wait_delay }}"
+
+- name: Show test restore phase
+  ansible.builtin.debug:
+    msg: "Test restore {{ velero_restore_test_name }} phase: {{ velero_restore_test_restore_phase.stdout }}"
+
+- name: Fail if test restore failed
+  ansible.builtin.fail:
+    msg: >-
+      Test restore failed.
+      Check details with:
+      kubectl describe restores.velero.io {{ velero_restore_test_name }} -n {{ velero_restore_namespace }}
+  when: velero_restore_test_restore_phase.stdout == "Failed"
+
+- name: Warn if test restore partially failed
+  ansible.builtin.debug:
+    msg: >-
+      Test restore completed with partial failures.
+      Check details with:
+      kubectl describe restores.velero.io {{ velero_restore_test_name }} -n {{ velero_restore_namespace }}
+  when: velero_restore_test_restore_phase.stdout == "PartiallyFailed"

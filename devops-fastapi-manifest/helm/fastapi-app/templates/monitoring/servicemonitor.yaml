@@ -1,0 +1,32 @@
+{{- if and .Values.backend.enabled .Values.backend.serviceMonitor.enabled }}
+# ServiceMonitor tells Prometheus how to scrape backend metrics.
+# It is discovered by the Prometheus Operator from kube-prometheus-stack.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "fastapi-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+    {{- with .Values.backend.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # Select the backend Service using the same labels as the backend pods/services.
+  selector:
+    matchLabels:
+      {{- include "fastapi-app.backend.selectorLabels" . | nindent 6 }}
+
+  endpoints:
+    # Scrape the backend /metrics endpoint through the Service port named "http".
+    - port: http
+      path: {{ .Values.backend.serviceMonitor.path }}
+      interval: {{ .Values.backend.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.backend.serviceMonitor.scrapeTimeout }}
+
+  # Limit scraping to the namespace where this application is deployed.
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.global.namespace }}
+{{- end }}

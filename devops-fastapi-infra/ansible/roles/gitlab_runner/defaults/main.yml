@@ -1,0 +1,13 @@
+---
+gitlab_runner_dir: /opt/gitlab-runner
+gitlab_runner_image: gitlab/gitlab-runner:latest
+gitlab_runner_url: https://gitlab.com/
+gitlab_runner_token: "{{ vault_gitlab_runner_registration_token }}"
+gitlab_runner_name: "app-runner-1"
+gitlab_runner_executor: "docker"
+gitlab_runner_docker_image: "alpine:latest"
+
+# Enable Docker-in-Docker jobs (services: [docker:dind]) by setting the
+# docker executor to privileged mode in the runner configuration.
+gitlab_runner_enable_dind: true
+gitlab_runner_docker_privileged: "{{ gitlab_runner_enable_dind }}"

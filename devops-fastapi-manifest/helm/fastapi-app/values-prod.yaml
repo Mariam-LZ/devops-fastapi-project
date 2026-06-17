@@ -1,0 +1,142 @@
+# Production environment values.
+# This file overrides the default Helm chart values for the prod namespace.
+# Unlike dev, prod is intended to be exposed publicly through Traefik and HTTPS.
+
+global:
+  # Namespace where the main application resources are deployed.
+  namespace: prod
+
+backend:
+  # Run two backend replicas in prod for better availability.
+  replicaCount: 2
+
+  image:
+    # Image tag managed by Argo CD Image Updater.
+    tag: "prod"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+  serviceMonitor:
+    # Enable Prometheus scraping for backend metrics.
+    enabled: true
+
+  prometheusRule:
+    # Enable Prometheus alerting rules for the backend.
+    enabled: true
+
+  envFromSecrets:
+    # Secrets are created by the infrastructure repository using Ansible Vault.
+    # The Helm chart only references existing Kubernetes secrets.
+    - fastapi-app-backend-secret
+    - fastapi-postgres-secret
+
+frontend:
+  # Run two frontend replicas in prod for better availability.
+  replicaCount: 2
+
+  image:
+    # Image tag managed by Argo CD Image Updater.
+    tag: "prod"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+
+postgresql:
+  # Force the Bitnami PostgreSQL chart to deploy its resources in the prod namespace.
+  namespaceOverride: prod
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prometheus-stack
+  
+  primary:
+    networkPolicy:
+      extraIngress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: backend
+                  app.kubernetes.io/instance: fastapi-app-prod
+          ports:
+            - protocol: TCP
+              port: 5432
+        # Allow backend prestart job to initialize/check the database.
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: backend-prestart
+                  app.kubernetes.io/instance: fastapi-app-prod
+          ports:
+            - protocol: TCP
+              port: 5432
+        # Allow Prometheus from the monitoring namespace to scrape PostgreSQL metrics.
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+          ports:
+            - protocol: TCP
+              port: 9187
+
+postgresqlMonitoring:
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+              
+adminer:
+  # Adminer is deployed in prod but not exposed publicly.
+  # It can still be accessed internally if needed.
+  enabled: true
+  ingress:
+    enabled: false
+
+ingress:
+  # Expose the production application through Traefik.
+  enabled: true
+  className: traefik
+
+  # Public hostname used to access the production application.
+  host: p.fastapi-liora.cloud-ip.cc
+
+  annotations:
+    # Ask cert-manager to issue a Let's Encrypt production certificate.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+    # Avoid Argo CD reporting extra generated resources as drift.
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+
+  tls:
+    # Enable HTTPS for the production ingress.
+    enabled: true
+    secretName: fastapi-app-tls
+
+  frontend:
+    # Route frontend traffic from the root path.
+    path: /
+    pathType: Prefix
+
+  backend:
+    # Route API traffic to the backend service.
+    path: /api
+    pathType: Prefix
+
+config:
+  # Application runtime environment used by the backend.
+  ENVIRONMENT: "production"
+
+  # Allowed frontend origin for browser requests to the backend API.
+  BACKEND_CORS_ORIGINS: "https://p.fastapi-liora.cloud-ip.cc"
+
+  # Internal Kubernetes service name for the prod PostgreSQL instance.
+  POSTGRES_SERVER: fastapi-app-prod-postgresql

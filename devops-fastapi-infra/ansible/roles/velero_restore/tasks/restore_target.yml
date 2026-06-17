@@ -1,0 +1,87 @@
+---
+- name: Check if final restore already exists
+  ansible.builtin.command:
+    cmd: >
+      kubectl get restores.velero.io {{ velero_restore_final_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_final_restore_existing
+  failed_when: false
+  changed_when: false
+
+- name: Stop if final restore already exists
+  ansible.builtin.fail:
+    msg: >-
+      Final restore {{ velero_restore_final_name }} already exists.
+      Use another restore name or delete the existing Restore object.
+  when: velero_restore_final_restore_existing.rc == 0
+
+- name: Create final restore PVC resource modifier ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ velero_restore_kubeconfig_path }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ velero_restore_final_name }}-resource-modifier"
+        namespace: "{{ velero_restore_namespace }}"
+        labels:
+          velero.io/plugin-config: ""
+          velero.io/resource-modifier: "true"
+      data:
+        resource-modifiers.yaml: "{{ lookup('template', 'resource-modifier-remove-pvc-volume.yml.j2') }}"
+  vars:
+    source_namespace: "{{ velero_restore_source_namespace }}"
+  when: velero_restore_remove_pvc_volume_name | default(true) | bool
+
+- name: Render final restore manifest
+  ansible.builtin.template:
+    src: restore.yml.j2
+    dest: "/tmp/{{ velero_restore_final_name }}.yml"
+    mode: "0644"
+  vars:
+    restore_name: "{{ velero_restore_final_name }}"
+    source_namespace: "{{ velero_restore_source_namespace }}"
+    target_namespace: "{{ velero_restore_target_namespace }}"
+
+- name: Apply final restore manifest
+  ansible.builtin.command:
+    cmd: >
+      kubectl apply -f /tmp/{{ velero_restore_final_name }}.yml
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+  register: velero_restore_final_restore_apply
+  changed_when: "'created' in velero_restore_final_restore_apply.stdout or 'configured' in velero_restore_final_restore_apply.stdout"
+
+- name: Wait for final restore completion
+  ansible.builtin.command:
+    cmd: >
+      kubectl get restores.velero.io {{ velero_restore_final_name }}
+      -n {{ velero_restore_namespace }}
+      --kubeconfig {{ velero_restore_kubeconfig_path }}
+      -o jsonpath='{.status.phase}'
+  register: velero_restore_final_restore_phase
+  changed_when: false
+  until: velero_restore_final_restore_phase.stdout in ["Completed", "PartiallyFailed", "Failed"]
+  retries: "{{ velero_restore_wait_retries }}"
+  delay: "{{ velero_restore_wait_delay }}"
+
+- name: Show final restore phase
+  ansible.builtin.debug:
+    msg: "Final restore {{ velero_restore_final_name }} phase: {{ velero_restore_final_restore_phase.stdout }}"
+
+- name: Fail if final restore failed
+  ansible.builtin.fail:
+    msg: >-
+      Final restore failed.
+      Check details with:
+      kubectl describe restores.velero.io {{ velero_restore_final_name }} -n {{ velero_restore_namespace }}
+  when: velero_restore_final_restore_phase.stdout == "Failed"
+
+- name: Warn if final restore partially failed
+  ansible.builtin.debug:
+    msg: >-
+      Final restore completed with partial failures.
+      Check details with:
+      kubectl describe restores.velero.io {{ velero_restore_final_name }} -n {{ velero_restore_namespace }}
+  when: velero_restore_final_restore_phase.stdout == "PartiallyFailed"

@@ -1,0 +1,59 @@
+# This Argo CD Application describes how the production environment is deployed.
+#
+# GitOps flow:
+# 1. Argo CD watches the manifest repository on the main branch.
+# 2. It reads the Helm chart from helm/fastapi-app.
+# 3. It applies the production values file: values-prod.yaml.
+# 4. The application is deployed into the prod namespace.
+# 5. If the Kubernetes state differs from Git, Argo CD automatically reconciles it.
+#
+# Image update flow:
+# 1. Argo CD Image Updater watches the backend and frontend container images.
+# 2. When a newer image is available in the GitLab registry, it updates the Helm image tag.
+# 3. The update is written back to the manifest repository.
+# 4. Argo CD detects the Git change and syncs the new version into the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fastapi-app-prod
+  namespace: argocd
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: backend=registry.gitlab.com/devops-glmt/devops-fastapi-app/backend,frontend=registry.gitlab.com/devops-glmt/devops-fastapi-app/frontend
+
+    argocd-image-updater.argoproj.io/backend.helm.image-name: backend.image.repository
+    argocd-image-updater.argoproj.io/backend.helm.image-tag: backend.image.tag
+    argocd-image-updater.argoproj.io/backend.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/backend.allow-tags: regexp:^prod-[a-f0-9]{8}$
+
+    argocd-image-updater.argoproj.io/frontend.helm.image-name: frontend.image.repository
+    argocd-image-updater.argoproj.io/frontend.helm.image-tag: frontend.image.tag
+    argocd-image-updater.argoproj.io/frontend.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/frontend.allow-tags: regexp:^prod-[a-f0-9]{8}$
+
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/git-branch: main
+
+spec:
+  project: default
+
+  source:
+    # Argo CD uses this Helm chart and the production values file as the desired state.
+    repoURL: https://gitlab.com/devops-glmt/devops-fastapi-manifest.git
+    targetRevision: main
+    path: helm/fastapi-app
+    helm:
+      valueFiles:
+        - values-prod.yaml
+
+  destination:
+    # The application is deployed in the prod namespace of the current cluster.
+    server: https://kubernetes.default.svc
+    namespace: prod
+
+  syncPolicy:
+    automated:
+      # Remove resources deleted from Git and restore resources manually changed in the cluster.
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

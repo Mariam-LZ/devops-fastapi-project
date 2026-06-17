@@ -1,0 +1,11 @@
+services:
+  gitlab-runner:
+    image: {{ gitlab_runner_image }}
+    container_name: gitlab-runner
+    restart: always
+
+    volumes:
+      - "./config:/etc/gitlab-runner"
+      # Allows the runner to execute Docker commands on the host.
+      # Required for Docker-based CI/CD jobs.
+      - "/var/run/docker.sock:/var/run/docker.sock"

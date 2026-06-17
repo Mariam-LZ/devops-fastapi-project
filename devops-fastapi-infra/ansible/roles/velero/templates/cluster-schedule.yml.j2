@@ -1,0 +1,17 @@
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: "{{ velero_schedule_name }}"
+  namespace: "{{ velero_namespace | default('velero') }}"
+spec:
+  # Cron expression: by default every day at 02:00 UTC.
+  schedule: "{{ velero_schedule_cron }}"
+  template:
+    # Backup all namespaces unless velero_included_namespaces is overridden.
+    includedNamespaces:
+{% for namespace in velero_included_namespaces %}
+      - "{{ namespace }}"
+{% endfor %}
+    storageLocation: default
+    # Retention duration: backups older than TTL are deleted automatically.
+    ttl: "{{ velero_backup_ttl }}"

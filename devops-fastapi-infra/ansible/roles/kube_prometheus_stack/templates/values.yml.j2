@@ -1,0 +1,67 @@
+kubeEtcd:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+  
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    serviceMonitorSelector: {}
+    ruleSelector: {}
+
+grafana:
+  enabled: true
+  persistence:
+    enabled: false
+    size: 5Gi
+
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+
+alertmanager:
+  enabled: true
+
+  config:
+    global:
+      resolve_timeout: {{  kube_prometheus_stack_alertmanager_resolve_timeout | default('5m') }}
+
+    route:
+      receiver: discord
+      group_by:
+        - alertname
+        - namespace
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: {{ kube_prometheus_stack_alertmanager_repeat_interval | default('4h') }}
+
+      routes:
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+
+    receivers:
+      - name: "null"
+
+      - name: discord
+        discord_configs:
+          - webhook_url: "{{ vault_alertmanager_discord_webhook_url }}"
+            send_resolved: true

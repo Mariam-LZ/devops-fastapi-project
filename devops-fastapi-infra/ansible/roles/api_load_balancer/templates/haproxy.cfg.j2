@@ -1,0 +1,25 @@
+# Exposes a single stable endpoint for the Kubernetes API.
+# Clients connect to the virtual IP managed by Keepalived instead
+# of targeting masters directly.
+frontend kubernetes-api
+    bind {{ kube_api_vip }}:8443
+    mode tcp
+    default_backend kubernetes-masters
+
+# Forwards API traffic to all control plane nodes.
+# TCP mode is required because the Kubernetes API uses HTTPS/TLS.
+backend kubernetes-masters
+    mode tcp
+
+    # Distributes requests evenly across available masters.
+    balance roundrobin
+
+    # Verifies that the Kubernetes API port is reachable on each node.
+    # Failed masters are automatically removed from the backend pool.
+    option tcp-check
+
+{# Dynamically generates one backend server entry per master node
+   defined in the Ansible inventory group "masters". #}
+{% for host in groups['masters'] %}
+    server {{ host }} {{ hostvars[host].ansible_host }}:6443 check
+{% endfor %}
