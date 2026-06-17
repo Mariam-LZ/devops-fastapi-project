@@ -1,0 +1,11 @@
+stages:
+  - test
+  - build
+  - package
+  - security
+
+include:
+  - local: ".gitlab/ci/frontend.yml"
+  - local: ".gitlab/ci/backend.yml"
+  - local: ".gitlab/ci/package.yml"
+  - local: ".gitlab/ci/security.yml"

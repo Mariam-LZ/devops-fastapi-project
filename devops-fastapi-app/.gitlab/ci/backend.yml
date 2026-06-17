@@ -1,0 +1,51 @@
+backend:lint:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.10-bookworm
+  rules:
+    - changes:
+        - backend/**/*
+        - .gitlab/ci/backend.yml
+        - .gitlab-ci.yml
+  before_script:
+    - cd backend
+    - uv sync
+  script:
+     - uv run bash scripts/lint.sh
+
+backend:test:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.10-bookworm
+  services:
+    - name: postgres:17
+      alias: db
+  variables:
+    PROJECT_NAME: "FastAPI CI"
+    ENVIRONMENT: "local"
+    POSTGRES_SERVER: "db"
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: "app"
+    POSTGRES_USER: "postgres"
+    POSTGRES_PASSWORD: "$POSTGRES_PASSWORD"
+    EMAIL_TEST_USER: "test@example.com"
+    SMTP_HOST: "mailcatcher"
+    SMTP_PORT: "1025"
+    SMTP_TLS: "false"
+    SMTP_SSL: "false"
+    EMAILS_FROM_EMAIL: "noreply@example.com"
+    EMAILS_FROM_NAME: "noreply@example.com"
+  rules:
+    - changes:
+        - backend/**/*
+        - .gitlab/ci/backend.yml
+        - .gitlab-ci.yml
+  before_script:
+    - cd backend
+    - uv sync
+  script:
+    - uv run alembic upgrade head
+    - uv run bash scripts/tests-start.sh
+  artifacts:
+    when: always
+    paths:
+      - backend/htmlcov/
+    expire_in: 1 week

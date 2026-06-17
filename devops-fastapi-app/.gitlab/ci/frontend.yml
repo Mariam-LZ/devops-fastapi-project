@@ -1,0 +1,41 @@
+frontend:lint:
+  stage: test
+  image: node:20
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab/ci/frontend.yml
+        - .gitlab-ci.yml
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/.npm/
+  before_script:
+    - cd frontend
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run lint
+
+frontend:build:
+  stage: build
+  image: node:20
+  needs:
+    - frontend:lint
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab/ci/frontend.yml
+        - .gitlab-ci.yml
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/.npm/
+  before_script:
+    - cd frontend
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run build

@@ -1,0 +1,80 @@
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+
+.trivy_scan_template:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  before_script:
+    - trivy registry login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password "$CI_REGISTRY_PASSWORD"
+  script:
+    - trivy image --scanners vuln --severity HIGH,CRITICAL "$CI_REGISTRY_IMAGE/$SERVICE_NAME:dev-$CI_COMMIT_SHORT_SHA"
+  allow_failure: true
+
+scan:backend:
+  extends: .trivy_scan_template
+  variables:
+    SERVICE_NAME: backend
+  needs:
+    - job: docker:backend:dev
+      optional: true
+  rules:
+    - changes:
+        - backend/**/*
+        - .gitlab/ci/docker.yml
+
+scan:frontend:
+  extends: .trivy_scan_template
+  variables:
+    SERVICE_NAME: frontend
+  needs:
+    - job: docker:frontend:dev
+      optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab/ci/docker.yml
+
+# Disable the default single SAST job from the template.
+sast:
+  rules:
+    - when: never
+
+# Disable default global Semgrep job: we run scoped jobs below.
+semgrep-sast:
+  rules:
+    - when: never
+
+.sast_scan_template:
+  extends: semgrep-sast
+  stage: security
+
+sast:backend:
+  extends: .sast_scan_template
+  variables:
+    # Keep scan focused on backend by excluding frontend sources.
+    SAST_EXCLUDED_PATHS: frontend
+  needs:
+    - job: docker:backend:dev
+      optional: true
+  rules:
+    - changes:
+        - backend/**/*
+        - .gitlab/ci/backend.yml
+        - .gitlab/ci/security.yml
+
+sast:frontend:
+  extends: .sast_scan_template
+  variables:
+    # Keep scan focused on frontend by excluding backend sources.
+    SAST_EXCLUDED_PATHS: backend
+  needs:
+    - job: docker:frontend:dev
+      optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - .gitlab/ci/frontend.yml
+        - .gitlab/ci/security.yml
+

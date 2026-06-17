@@ -1,0 +1,78 @@
+# We use the latest Docker image to benefit from security updates.
+# If a breaking change occurs, pin the image to the last working stable version.
+.docker_build_template:
+  stage: package
+  image: docker:29.5.3
+  services:
+    - name: docker:29.5.3-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - |
+      docker build --pull -f "$SERVICE_PATH/Dockerfile" \
+        --build-arg VITE_API_URL="$VITE_API_URL" \
+        -t "$CI_REGISTRY_IMAGE/$SERVICE_NAME:$IMAGE_TAG" \
+        -t "$CI_REGISTRY_IMAGE/$SERVICE_NAME:$IMAGE_TAG-$CI_COMMIT_SHORT_SHA" \
+        "$SERVICE_PATH"
+    - docker push "$CI_REGISTRY_IMAGE/$SERVICE_NAME:$IMAGE_TAG"
+    - docker push "$CI_REGISTRY_IMAGE/$SERVICE_NAME:$IMAGE_TAG-$CI_COMMIT_SHORT_SHA"
+
+docker:backend:dev:
+  extends: .docker_build_template
+  variables:
+    SERVICE_NAME: backend
+    SERVICE_PATH: backend
+    IMAGE_TAG: dev
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - backend/**/*
+        - .gitlab/ci/package.yml
+        - .gitlab-ci.yml
+
+docker:backend:prod:
+  extends: .docker_build_template
+  variables:
+    SERVICE_NAME: backend
+    SERVICE_PATH: backend
+    IMAGE_TAG: prod
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - backend/**/*
+        - .gitlab/ci/package.yml
+        - .gitlab-ci.yml
+      when: manual
+
+docker:frontend:dev:
+  extends: .docker_build_template
+  variables:
+    SERVICE_NAME: frontend
+    SERVICE_PATH: frontend
+    IMAGE_TAG: dev
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - frontend/**/*
+        - .gitlab/ci/package.yml
+        - .gitlab-ci.yml
+
+docker:frontend:prod:
+  extends: .docker_build_template
+  variables:
+    SERVICE_NAME: frontend
+    SERVICE_PATH: frontend
+    IMAGE_TAG: prod
+    VITE_API_URL: "https://p.fastapi-liora.cloud-ip.cc"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - frontend/**/*
+        - .gitlab/ci/package.yml
+        - .gitlab-ci.yml
+      when: manual
